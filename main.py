@@ -6,8 +6,8 @@ from pathlib import Path
 
 from generator.config import Settings
 from generator.knowledge import build_index, extract
-from generator.pipeline import Pipeline
 from generator.models import Analysis
+from generator.pipeline import Pipeline
 from generator.verification import report, verify
 
 
