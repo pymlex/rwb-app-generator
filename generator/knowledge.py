@@ -26,7 +26,7 @@ def build_index(sources: Path, database: Path) -> int:
             for start in range(0, len(text), 3500):
                 connection.execute(
                     "INSERT INTO chunks VALUES (?, ?, ?)",
-                    (str(path.relative_to(sources)), fingerprint, text[start:start + 4000]),
+                    (str(path.relative_to(sources)), fingerprint, text[start : start + 4000]),
                 )
                 count += 1
     return count

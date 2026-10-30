@@ -22,7 +22,7 @@ On the organisers' VM use the same commands with `source .venv/bin/activate` and
 
 Generation saves structured requirements, a shared API blueprint, source files, documents, requirement links and per-call token usage. Stage results are cached by prompt, schema and model inputs. Repeating the same run reuses completed model calls. Changed business requirements require a new output directory.
 
-Critical ambiguities produce `docs/clarifications.json` and pause generation. Supply answers through `--answers answers.md` and resume the same output directory.
+Critical ambiguities produce `docs/clarifications.json` and pause generation. Supply a JSON object mapping question IDs to answers through `--answers answers.json` and resume the same output directory. The completed analysis is reused and the answers are retained separately.
 
 ## Execution
 

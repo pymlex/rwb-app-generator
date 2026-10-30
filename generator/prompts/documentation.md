@@ -1,4 +1,4 @@
-Generate exactly seven files: docs/system-analysis.md, docs/architecture.md, docs/api.md,
+Generate only the files explicitly listed at the end of this request. The complete set contains docs/system-analysis.md, docs/architecture.md, docs/api.md,
 docs/user-guide.md, docs/development.md, docs/limitations.md and README.md.
 Document the ACTUAL supplied backend and frontend rather than the unimplemented blueprint.
 Use English. Do not use comments, emoji, prose parentheses, semicolons, filler, promotional adjectives,

@@ -1,0 +1,5 @@
+{
+  "Q-001": "Implementation assumption for the demonstration: leaving a zone does not cancel, refund or extend a previously confirmed paid session. Preserve its original expiry and zone association. Emit a departure or zone-change notification. Never infer that payment in a different zone is valid and never initiate a real charge.",
+  "Q-002": "Implementation assumption for the demonstration: accept confirmed sessions up to 24 hours and enforce the selected provider minimum duration and time step where applicable. Document this limit as configurable rather than as a customer requirement.",
+  "Q-003": "Implementation assumption for the demonstration: a driver may use multiple assigned vehicles. Enforce at most one active session per vehicle. Every vehicle and its location history must be scoped to the authenticated driver. The shared demo driver identity must be documented as a prototype limitation."
+}

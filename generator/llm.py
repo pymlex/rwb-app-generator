@@ -1,10 +1,12 @@
 import json
 import re
 import time
+from dataclasses import asdict
 from pathlib import Path
 
 import httpx
 
+from generator.budget import plan_budget, retry_delay
 from generator.config import Settings
 from generator.storage import digest, event, write_json
 
@@ -28,38 +30,79 @@ class Qwen:
         self.run = run
 
     def generate(self, stage: str, instruction: str, context: str, schema):
-        prompt = instruction + "\n\nCONTEXT\n" + context + "\n\nJSON SCHEMA\n" + json.dumps(schema.model_json_schema())
+        prompt = (
+            instruction
+            + "\n\nCONTEXT\n"
+            + context
+            + "\n\nJSON SCHEMA\n"
+            + json.dumps(schema.model_json_schema())
+        )
         key = digest(SYSTEM + prompt + self.settings.model)
         cache = self.run / "checkpoints" / f"{stage}-{key[:16]}.json"
         if cache.exists():
             event(self.run, "cache_hit", stage=stage, fingerprint=key)
             return schema.model_validate_json(cache.read_text(encoding="utf-8"))
-        event(self.run, "model_started", stage=stage, fingerprint=key)
+        event(self.run, "model_started", stage=stage, fingerprint=key, http_tracking=True)
         started = time.monotonic()
+        messages = [
+            {"role": "system", "content": SYSTEM},
+            {"role": "user", "content": prompt},
+        ]
         with httpx.Client(timeout=self.settings.timeout) as client:
-            response = client.post(
-                self.settings.base_url + "/chat/completions",
-                headers={"Authorization": f"Bearer {self.settings.api_key}"},
-                json={
-                    "model": self.settings.model,
-                    "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}],
-                    "temperature": 0.1,
-                    "max_tokens": self.settings.max_output_tokens,
-                    "response_format": {"type": "json_object"},
-                    "chat_template_kwargs": {"enable_thinking": False},
-                },
-            )
+            budget = plan_budget(client, self.settings, stage, messages)
+            event(self.run, "token_budget", stage=stage, **asdict(budget))
+            for attempt in range(3):
+                event(
+                    self.run,
+                    "model_http_attempt",
+                    stage=stage,
+                    fingerprint=key,
+                    attempt=attempt + 1,
+                )
+                response = client.post(
+                    self.settings.base_url + "/chat/completions",
+                    headers={"Authorization": f"Bearer {self.settings.api_key}"},
+                    json={
+                        "model": self.settings.model,
+                        "messages": messages,
+                        "temperature": 0.1,
+                        "max_tokens": budget.output_cap,
+                        "response_format": {"type": "json_object"},
+                        "chat_template_kwargs": {"enable_thinking": False},
+                    },
+                )
+                if response.is_success:
+                    break
+                event(
+                    self.run,
+                    "model_http_failure",
+                    stage=stage,
+                    status=response.status_code,
+                    detail=response.text.replace(self.settings.api_key, "[REDACTED]")[:2000],
+                )
+                delay = retry_delay(response, budget)
+                if delay is None or attempt == 2:
+                    event(self.run, "retry_declined", stage=stage, status=response.status_code)
+                    break
+                event(self.run, "rate_window_wait", stage=stage, seconds=delay)
+                time.sleep(delay)
         response.raise_for_status()
         data = response.json()
+        write_json(self.run / "responses" / f"{stage}-{key[:16]}.json", data)
         choice = data["choices"][0]
         event(
-            self.run, "model_completed", stage=stage,
+            self.run,
+            "model_completed",
+            stage=stage,
             duration_seconds=round(time.monotonic() - started, 3),
-            usage=data.get("usage", {}), finish_reason=choice.get("finish_reason"),
+            usage=data.get("usage", {}),
+            finish_reason=choice.get("finish_reason"),
         )
         if choice.get("finish_reason") == "length":
             raise ValueError(f"Stage {stage} exceeded output token budget")
-        content = re.sub(r"<think>.*?</think>", "", choice["message"]["content"], flags=re.S).strip()
+        content = re.sub(
+            r"<think>.*?</think>", "", choice["message"]["content"], flags=re.S
+        ).strip()
         if content.startswith("```"):
             content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content)
         result = schema.model_validate_json(content)

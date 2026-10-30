@@ -8,5 +8,6 @@ dist/
 .angular/
 __pycache__/
 .pipeline/checkpoints/
+.pipeline/responses/
 .pipeline/events.jsonl
 reports/*.log

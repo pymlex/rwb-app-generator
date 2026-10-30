@@ -1,6 +1,7 @@
 import argparse
 import getpass
 import json
+import sys
 import time
 from pathlib import Path
 
@@ -9,6 +10,16 @@ from generator.knowledge import build_index, extract
 from generator.models import Analysis
 from generator.pipeline import Pipeline
 from generator.verification import report, verify
+
+
+def docker_password(enabled: bool) -> str | None:
+    if not enabled:
+        return None
+    return (
+        getpass.getpass("Docker sudo password: ")
+        if sys.stdin.isatty()
+        else sys.stdin.readline().rstrip("\r\n")
+    )
 
 
 def main():
@@ -34,18 +45,29 @@ def main():
     if args.command == "index":
         print(json.dumps({"indexed_chunks": build_index(args.sources, args.database)}))
     elif args.command == "generate":
-        sudo_password = getpass.getpass("Docker sudo password: ") if args.sudo else None
+        sudo_password = docker_password(args.sudo)
         answers = extract(args.answers) if args.answers else ""
         result = Pipeline(Settings.from_env(), args.output, args.knowledge).run(
-            extract(args.requirements), answers, execute=args.execute, deploy=args.deploy, sudo_password=sudo_password,
+            extract(args.requirements),
+            answers,
+            execute=args.execute,
+            deploy=args.deploy,
+            sudo_password=sudo_password,
         )
         print(json.dumps(result, indent=2))
+        if result["status"] == "failed":
+            raise SystemExit(1)
     else:
-        sudo_password = getpass.getpass("Docker sudo password: ") if args.sudo else None
+        sudo_password = docker_password(args.sudo)
         started = time.monotonic()
         checks = verify(args.output, args.execute, args.deploy, sudo_password)
-        analysis = Analysis.model_validate_json((args.output / "docs" / "analysis.json").read_text(encoding="utf-8"))
-        print(json.dumps(report(args.output, analysis, checks, time.monotonic() - started), indent=2))
+        analysis = Analysis.model_validate_json(
+            (args.output / "docs" / "analysis.json").read_text(encoding="utf-8")
+        )
+        result = report(args.output, analysis, checks, time.monotonic() - started)
+        print(json.dumps(result, indent=2))
+        if result["status"] == "failed":
+            raise SystemExit(1)
 
 
 if __name__ == "__main__":

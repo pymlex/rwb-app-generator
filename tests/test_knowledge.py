@@ -7,7 +7,9 @@ def test_retrieval_keeps_source_and_content_fingerprint(tmp_path):
     source = tmp_path / "sources"
     source.mkdir()
     document = source / "rules.md"
-    document.write_text("Каждое требование имеет идентификатор. API содержит авторизацию.", encoding="utf-8")
+    document.write_text(
+        "Каждое требование имеет идентификатор. API содержит авторизацию.", encoding="utf-8"
+    )
     database = tmp_path / "index.sqlite"
     assert build_index(source, database) == 1
     result = retrieve(database, "авторизацию")

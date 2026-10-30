@@ -10,6 +10,9 @@ class Settings:
     timeout: float = 600
     max_output_tokens: int = 14000
     max_repairs: int = 2
+    tpm_limit: int = 30000
+    context_limit: int = 32768
+    token_margin: int = 512
 
     @classmethod
     def from_env(cls):
@@ -23,4 +26,7 @@ class Settings:
             timeout=float(os.environ.get("QWEN_TIMEOUT", "600")),
             max_output_tokens=int(os.environ.get("RWB_MAX_OUTPUT_TOKENS", "14000")),
             max_repairs=int(os.environ.get("RWB_MAX_REPAIRS", "2")),
+            tpm_limit=int(os.environ.get("RWB_TPM_LIMIT", "30000")),
+            context_limit=int(os.environ.get("RWB_CONTEXT_LIMIT", "32768")),
+            token_margin=int(os.environ.get("RWB_TOKEN_MARGIN", "512")),
         )
