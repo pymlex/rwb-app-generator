@@ -14,6 +14,7 @@ release:
     - chmod 600 .env
     - docker compose config --quiet
     - docker compose --profile checks run --rm lock
+    - docker compose --profile checks run --rm backend-lock
     - docker compose --parallel 1 build
     - docker compose --profile checks run --rm --build unit > reports/unit.log 2>&1 || { cat reports/unit.log; exit 1; }
     - cat reports/unit.log

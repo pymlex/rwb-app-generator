@@ -9,7 +9,14 @@ from pathlib import Path
 from generator.agents import AgentState, RoleGraph, SkillLoader
 from generator.config import Settings
 from generator.llm import OutputLimitExceeded, Qwen
-from generator.models import Analysis, ArtifactBatch, BackendReview, Blueprint, RequirementReviews
+from generator.models import (
+    Analysis,
+    ArtifactBatch,
+    BackendReview,
+    Blueprint,
+    ImplementationPlan,
+    RequirementReviews,
+)
 from generator.reference_data import profile_data, validate_contract
 from generator.storage import digest, event, save_batch, source_span, write_json
 from generator.verification import backend_build, report, verify
@@ -43,6 +50,20 @@ def service_groups(source: str) -> list[list[str]]:
     if len(initial) != 1 or not operations:
         raise ValueError("Domain service must expose Initialise and typed operations")
     return [initial, *[operations[index : index + 3] for index in range(0, len(operations), 3)]]
+
+
+def validate_plan(
+    plan: ImplementationPlan, methods: set[str], requirements: set[str], endpoints: set[str]
+):
+    assigned = [method for package in plan.packages for method in package.methods]
+    if sorted(assigned) != sorted(methods) or plan.packages[0].methods != ["Initialise"]:
+        raise ValueError("Implementation plan must assign every method once and Initialise first")
+    for package in plan.packages:
+        if (
+            not set(package.requirement_ids) <= requirements
+            or not set(package.endpoint_paths) <= endpoints
+        ):
+            raise ValueError("Work plan references unknown requirements or API paths")
 
 
 class Pipeline:
@@ -144,7 +165,7 @@ class Pipeline:
         platform += ["backend/migrations/001_initial.sql"]
         if stage.startswith("analysis") or stage.startswith("architecture"):
             paths = ["docs/analysis.json", "docs/clarification-answers.json"]
-        elif stage.startswith("backend-models"):
+        elif stage.startswith("backend-models") or stage.startswith("backend-plan"):
             paths = platform
         elif stage.startswith("backend-service"):
             paths = [*platform, *BACKEND_CONTRACT, *self.service_paths]
@@ -252,21 +273,60 @@ class Pipeline:
 
     def backend_service(self, state: AgentState) -> AgentState:
         source = (self.output / "backend/DomainModels.cs").read_text(encoding="utf-8")
-        groups = service_groups(source)
+        signatures = [method for group in service_groups(source) for method in group]
+        by_name = {re.search(r"(\w+)\s*\(", method).group(1): method for method in signatures}
+        if len(by_name) != len(signatures):
+            raise ValueError(
+                "Service operation names must be unique for deterministic work delegation"
+            )
+        planning = self.context(
+            "architect",
+            {"blueprint": self.blueprint.model_dump(), "available_methods": list(by_name)},
+            BACKEND_CONTRACT,
+        )
+        plan = self.ask(
+            "backend-plan", self.prompt("implementation-plan"), planning, ImplementationPlan
+        )
+        validate_plan(
+            plan,
+            set(by_name),
+            {item.id for item in self.analysis.requirements},
+            {item.path for item in self.blueprint.endpoints},
+        )
+        write_json(self.run_dir / "implementation-plan.json", plan.model_dump())
         self.service_paths = []
+        self.work_packages = {}
 
-        def implement(identifier: str, methods: list[str]):
+        def implement(identifier: str, methods: list[str], package):
             path = f"backend/DomainService.Part{identifier}.cs"
+            event(
+                self.run_dir,
+                "work_delegated",
+                sender="engineering_lead",
+                recipient=f"backend-service-{identifier}",
+                methods=methods,
+                requirement_ids=package.requirement_ids,
+                output_path=path,
+            )
             task = {
                 "module": f"Part{identifier}",
                 "output_path": path,
                 "assigned_methods": methods,
-                "blueprint": self.blueprint.model_dump(),
+                "blueprint": {
+                    **self.blueprint.model_dump(),
+                    "endpoints": [
+                        item.model_dump()
+                        for item in self.blueprint.endpoints
+                        if item.path in package.endpoint_paths
+                    ],
+                },
+                "purpose": package.purpose,
             }
             context = self.context(
                 "backend_service",
                 task,
                 [*BACKEND_CONTRACT, "backend/DomainSupport.cs", "backend/DomainService.cs"],
+                [item for item in self.analysis.requirements if item.id in package.requirement_ids],
             )
             instruction = self.prompt("backend-service")
             if identifier == "00":
@@ -286,13 +346,22 @@ class Pipeline:
                 (self.output / path).unlink(missing_ok=True)
                 self.generated.pop(path, None)
                 split = len(methods) // 2
-                implement(identifier + "A", methods[:split])
-                implement(identifier + "B", methods[split:])
+                implement(identifier + "A", methods[:split], package)
+                implement(identifier + "B", methods[split:], package)
                 return
             self.service_paths.append(path)
+            self.work_packages[path] = package.model_dump()
+            event(
+                self.run_dir,
+                "work_completed",
+                sender=f"backend-service-{identifier}",
+                recipient="engineering_lead",
+                artifact=path,
+                sha256=digest((self.output / path).read_text(encoding="utf-8")),
+            )
 
-        for index, methods in enumerate(groups):
-            implement(f"{index:02}", methods)
+        for index, package in enumerate(plan.packages):
+            implement(f"{index:02}", [by_name[name] for name in package.methods], package)
         for obsolete in (self.output / "backend").glob("DomainService.Part*.cs"):
             relative = obsolete.relative_to(self.output).as_posix()
             if relative not in self.service_paths:
@@ -300,6 +369,7 @@ class Pipeline:
                 self.generated.pop(relative, None)
         self.save_manifest()
         write_json(self.run_dir / "service-modules.json", self.service_paths)
+        write_json(self.run_dir / "work-packages.json", self.work_packages)
         return AgentState(artifacts={"backend_services": self.service_paths})
 
     def backend_routes(self, state: AgentState) -> AgentState:
@@ -319,7 +389,7 @@ class Pipeline:
         check = backend_build(self.output, self.execute, self.sudo_password)
         write_json(self.run_dir / "backend-build.json", check.model_dump())
         passed = check.status == "passed" or not self.execute
-        repairable = check.status == "failed" and bool(re.search(r"error (CS|NU)\d+", check.log))
+        repairable = check.status == "failed" and bool(re.search(r"error CS\d+", check.log))
         return AgentState(
             build_passed=passed,
             repairable=repairable,
@@ -333,18 +403,43 @@ class Pipeline:
             *[[path, *BACKEND_CONTRACT] for path in self.service_paths],
         ]
         for index, paths in enumerate(groups):
+            package = self.work_packages.get(paths[0])
+            requirements = (
+                [
+                    item
+                    for item in self.analysis.requirements
+                    if package and item.id in package["requirement_ids"]
+                ]
+                if package
+                else self.analysis.requirements
+            )
+            blueprint = self.blueprint.model_dump()
+            if package:
+                blueprint["endpoints"] = [
+                    item.model_dump()
+                    for item in self.blueprint.endpoints
+                    if item.path in package["endpoint_paths"]
+                ]
             context = self.context(
                 "backend_review",
                 {
                     "task": "Review supplied module only. Other interface methods are implemented in separate partial files. Fixed helpers are trusted platform primitives.",
-                    "blueprint": self.blueprint.model_dump(),
+                    "blueprint": blueprint,
                 },
                 paths,
+                requirements,
             )
             reviewed = self.ask(
                 f"backend-review-{index:02}", self.prompt("backend-review"), context, BackendReview
             )
+            serious_found = any(issue.severity in {"critical", "high"} for issue in reviewed.issues)
+            if reviewed.passes_static_review == serious_found:
+                raise ValueError("Reviewer verdict contradicts its defect severities")
             for issue in reviewed.issues:
+                if not set(issue.requirement_ids) <= {
+                    item.id for item in self.analysis.requirements
+                }:
+                    raise ValueError("Reviewer cited an unknown requirement")
                 if issue.path not in paths:
                     raise ValueError("Reviewer cited a file outside its supplied context")
                 issue.source_quote = source_span(

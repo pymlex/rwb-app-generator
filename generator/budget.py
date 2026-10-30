@@ -14,6 +14,7 @@ STAGE_OUTPUT_CAPS = {
     "backend": 14000,
     "frontend": 8192,
     "backend-models": 8000,
+    "backend-plan": 4000,
     "backend-service": 10000,
     "backend-routes": 6000,
     "backend-review": 4000,

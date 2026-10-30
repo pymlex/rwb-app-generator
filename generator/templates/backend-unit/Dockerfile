@@ -1,6 +1,7 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /source
 COPY backend/App.csproj backend/
+COPY backend/packages.lock.json backend/
 COPY backend-unit/Unit.csproj backend-unit/
 RUN dotnet restore backend-unit/Unit.csproj
 COPY backend/ backend/

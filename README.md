@@ -54,6 +54,7 @@ Run generation, builds, tests and deployment on the organiser VM. Python 3.12 or
 ```bash
 python -m venv .venv
 source .venv/bin/activate
+python -m pip install -r requirements.lock
 python -m pip install -e ".[dev]"
 export QWEN_BASE_URL=http://10.10.10.10:4000/v1
 read -rs -p 'Qwen API key: ' QWEN_API_KEY
@@ -95,6 +96,8 @@ python -m ruff check .
 ```
 
 Core modules are under `generator/`. Role instructions are under `generator/prompts/`. Target stack files are under `generator/templates/`. See [implementation status](docs/status.md), [architecture decisions](docs/architecture.md) and [evaluation procedure](docs/evaluation.md).
+
+GitHub CI uses the repository's `rwb-vm` self-hosted runner on the organiser VM. It runs without sudo or Docker access. Generated GitLab release jobs require an `organiser-vm` runner and a protected `APP_ENV_FILE` file variable containing stable application credentials. The deployment operator supplies Docker access separately.
 
 ## Collaboration and releases
 

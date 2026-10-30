@@ -113,3 +113,14 @@ class RequirementReview(StrictModel):
 
 class RequirementReviews(StrictModel):
     requirements: list[RequirementReview]
+
+
+class WorkPackage(StrictModel):
+    methods: list[str] = Field(min_length=1, max_length=3)
+    requirement_ids: list[str]
+    endpoint_paths: list[str]
+    purpose: str
+
+
+class ImplementationPlan(StrictModel):
+    packages: list[WorkPackage] = Field(min_length=1)

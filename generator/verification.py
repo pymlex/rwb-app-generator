@@ -91,6 +91,15 @@ def structural(root: Path) -> Check:
 
 
 def backend_build(root: Path, execute: bool, sudo_password: str | None = None) -> Check:
+    locked = run_check(
+        root,
+        "backend-dependency-lock",
+        ["docker", "compose", "--profile", "checks", "run", "--rm", "backend-lock"],
+        execute,
+        sudo_password,
+    )
+    if locked.status == "failed":
+        return locked
     return run_check(
         root,
         "backend-build",
@@ -118,6 +127,15 @@ def verify(
             root,
             "dependency-lock",
             ["docker", "compose", "--profile", "checks", "run", "--rm", "lock"],
+            execute,
+            sudo_password,
+        )
+    )
+    checks.append(
+        run_check(
+            root,
+            "backend-dependency-lock",
+            ["docker", "compose", "--profile", "checks", "run", "--rm", "backend-lock"],
             execute,
             sudo_password,
         )

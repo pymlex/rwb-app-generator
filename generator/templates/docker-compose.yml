@@ -67,6 +67,15 @@ services:
       - ./frontend:/app
     command: [npm, install, --package-lock-only, --ignore-scripts, --no-audit, --no-fund]
     mem_limit: 512m
+  backend-lock:
+    image: mcr.microsoft.com/dotnet/sdk:10.0
+    profiles: [checks]
+    working_dir: /app
+    volumes:
+      - ./backend:/app
+      - nuget-cache:/root/.nuget/packages
+    command: [dotnet, restore, App.csproj, --use-lock-file]
+    mem_limit: 512m
   unit:
     build:
       context: .
@@ -102,3 +111,4 @@ services:
 volumes:
   database:
   scanner-cache:
+  nuget-cache:
