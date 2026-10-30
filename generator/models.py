@@ -95,3 +95,21 @@ class ReviewIssue(StrictModel):
 class BackendReview(StrictModel):
     passes_static_review: bool
     issues: list[ReviewIssue]
+
+
+class AssertionEvidence(StrictModel):
+    path: str
+    test_name: str = Field(pattern=r"^test_FR_[0-9]{3}")
+    source_quote: str = Field(min_length=1)
+    criterion: str
+
+
+class RequirementReview(StrictModel):
+    requirement_id: str = Field(pattern=r"^FR-[0-9]{3}$")
+    status: Literal["passed", "failed"]
+    evidence: list[AssertionEvidence]
+    missing_criteria: list[str]
+
+
+class RequirementReviews(StrictModel):
+    requirements: list[RequirementReview]

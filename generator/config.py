@@ -16,11 +16,14 @@ class Settings:
 
     @classmethod
     def from_env(cls):
+        base_url = os.environ["QWEN_BASE_URL"].rstrip("/")
+        if base_url != "http://10.10.10.10:4000/v1":
+            raise ValueError("Application generation must use the organiser API endpoint")
         model = os.environ.get("QWEN_MODEL", "qwen3.8-27b")
         if model != "qwen3.8-27b":
             raise ValueError("The competition model must be qwen3.8-27b")
         return cls(
-            base_url=os.environ["QWEN_BASE_URL"].rstrip("/"),
+            base_url=base_url,
             api_key=os.environ["QWEN_API_KEY"],
             model=model,
             timeout=float(os.environ.get("QWEN_TIMEOUT", "600")),

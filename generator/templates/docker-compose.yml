@@ -67,6 +67,15 @@ services:
       - ./frontend:/app
     command: [npm, install, --package-lock-only, --ignore-scripts, --no-audit, --no-fund]
     mem_limit: 512m
+  unit:
+    build:
+      context: .
+      dockerfile: backend-unit/Dockerfile
+    profiles: [checks]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 256m
   acceptance:
     image: python:3.12-alpine
     profiles: [checks]

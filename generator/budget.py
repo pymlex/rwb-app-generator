@@ -13,8 +13,8 @@ STAGE_OUTPUT_CAPS = {
     "architecture": 6000,
     "backend": 14000,
     "frontend": 8192,
-    "backend-models": 6000,
-    "backend-service": 14000,
+    "backend-models": 8000,
+    "backend-service": 10000,
     "backend-routes": 6000,
     "backend-review": 4000,
     "frontend-logic": 8000,
@@ -53,7 +53,9 @@ def plan_budget(
     if result.get("error"):
         raise ValueError(f"Token counter rejected the request: {result.get('error_message')}")
     tokenizer_input = result["total_tokens"]
-    desired = min(settings.max_output_tokens, STAGE_OUTPUT_CAPS.get(stage, 10000))
+    matching = [name for name in STAGE_OUTPUT_CAPS if stage == name or stage.startswith(name + "-")]
+    cap = STAGE_OUTPUT_CAPS[max(matching, key=len)] if matching else 9000
+    desired = min(settings.max_output_tokens, cap)
     available = min(
         settings.tpm_limit - proxy_input - settings.token_margin,
         settings.context_limit - tokenizer_input - settings.token_margin,

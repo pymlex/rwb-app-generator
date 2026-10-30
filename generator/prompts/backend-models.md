@@ -1,4 +1,5 @@
 Generate exactly backend/DomainModels.cs and backend/migrations/002_domain.sql.
+All declarations use the global namespace to match the fixed platform. No namespace declaration.
 Design a typed contract for the supplied business requirements and API blueprint.
 DomainModels.cs must contain request DTOs, response DTOs, and public interface IDomainService.
 Every public service operation returns Task<OperationResult<TDto>> and receives Actor actor.
@@ -17,6 +18,10 @@ Street WKT lines are matched with ST_DWithin in metres. Do not use ST_Contains f
 Polygon boundaries use ST_Covers. Provider entityState values must be compared case-insensitively.
 If active sessions or loans are exclusive, enforce exclusivity at DATABASE level.
 Keep money as integer minor units. Preserve provider IDs separately from application IDs.
+Use the supplied reference_data profile as the source schema. Include original source identifiers,
+prices, timing constraints, original geometry and an explicit approximation flag in relevant DTOs.
+Store original source fields alongside normalised indexed fields. A Polygon column cannot hold
+supplied LINESTRING WKT. Use compatible geometry and geographic-distance indexes.
 Ensure all blueprint paths and operations can be implemented through the interface.
 Add explicit ADMIN-only deterministic demo time and step controls when required to demonstrate
 time-based behaviour without waiting. Separate demo time from actual time in response DTOs.

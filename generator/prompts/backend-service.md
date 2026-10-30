@@ -1,6 +1,11 @@
-Generate exactly backend/DomainService.cs implementing the supplied IDomainService interface.
-Use public sealed class DomainService(NpgsqlDataSource database, IConfiguration configuration).
-Implement ALL interface methods with working SQL persistence and business behaviour.
+Generate exactly the output_path named in the task, as one partial class DomainService.
+The fixed DomainService.cs already declares the constructor and fields database and configuration.
+Do not redeclare these fields, the constructor or the class primary constructor.
+Implement ONLY the method signatures listed in assigned_methods with working SQL persistence.
+Other interface methods are generated in separate partial files and may be called by exact signature.
+Use public sealed partial class DomainService : IDomainService. Add required using directives.
+Do not define helper names shared across modules. Prefix private helpers with the module identifier.
+Do not assume helpers exist in other partial files. Only fixed fields and interface methods are shared.
 Only BCL, Npgsql and supplied platform helpers are available. Do not change the interface or DTOs.
 Use parameterised SQL. Use DomainJson.Read<T> and DomainJson.Write for all JSON persistence.
 Actor.Subject is a STRING "driver" or "admin". Scope driver records to the matching OwnerSubject.

@@ -2,7 +2,7 @@
 
 Team TLE builds a requirements-driven application generator for the RWB hackathon. Business requirements are the domain input. Qwen3.8-27B produces system analysis, API contracts, domain code, an Angular interface, acceptance tests and handover documentation.
 
-The generated stack is Angular 20.1.6 with Angular Material and PWA support, ASP.NET Core on .NET 10, PostgreSQL with PostGIS, Kafka and Docker Compose. Python orchestrates generation. Corporate documentation is indexed locally with SQLite FTS5 and retrieved with source hashes.
+The generated stack is Angular 20.1.6 with Angular Material and PWA support, ASP.NET Core on .NET 10, PostgreSQL with PostGIS, Kafka and Docker Compose. Python and LangGraph coordinate specialist role agents. Corporate documentation is indexed locally with SQLite FTS5 and retrieved with source hashes.
 
 ## Architecture
 
@@ -13,7 +13,7 @@ The generator runs on the organiser VM. Every application generation request use
 classDiagram
     direction TB
     class Knowledge["Knowledge<br/>SQLite FTS5"]
-    class Pipeline["Pipeline<br/>Analysis, contracts, code"]
+    class Pipeline["LangGraph MAS<br/>Specialist role agents"]
     class Qwen["Organiser API<br/>Qwen3.8-27B"]
     class Checkpoints["Checkpoints<br/>Cache and usage"]
     class Verification["Verification<br/>Build, tests, security"]
@@ -42,6 +42,8 @@ classDiagram
     Publisher --> Kafka : publish
 ```
 
+
+Role agents exchange typed contracts and artifact references instead of accumulating a shared transcript. Each agent can search the local knowledge index and read allowlisted artifacts. Build and independent review gates route concrete failures back to the responsible worker before downstream generation. See [agent design and research rationale](docs/agent-design.md) and [source-requirement checklist](docs/requirements-compliance.md).
 
 These diagrams describe the target architecture. Deployment and acceptance status are reported separately in the generated evidence.
 
@@ -80,6 +82,8 @@ Checks use fixed Docker commands. The model cannot select host shell commands or
 ## Evidence
 
 Each output contains `reports/checks.json`, individual check logs, `reports/security.json`, `reports/traceability.json`, `reports/summary.json` and a readable verification report. A check that was not executed is reported as `not_run`. Generated requirement links describe intended coverage and do not prove that a requirement passed.
+
+A requirement passes only when named runtime tests succeed and independent assertion review identifies concrete checks for its acceptance criteria. Runtime verification and release readiness are reported separately.
 
 The parking case is a preparation fixture. No parking-specific code is built into the generator. A second requirements file uses the same stages and platform templates.
 

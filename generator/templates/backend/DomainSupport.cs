@@ -56,7 +56,7 @@ public static class RequestKeys
         NpgsqlDataSource database, Actor actor, string? key, string route,
         object request, Func<NpgsqlConnection, NpgsqlTransaction, Task<OperationResult<T>>> action)
     {
-        if (key is null || !Regex.IsMatch(key, "^[A-Za-z0-9_.:-]{8,128}$"))
+        if (key is null || !Regex.IsMatch(key, "\\A[A-Za-z0-9_.:-]{8,128}\\z"))
             return new(400, default, "Idempotency-Key must contain 8 to 128 permitted characters");
         var requestHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(route + "\n" + DomainJson.Write(request))));
         await using var connection = await database.OpenConnectionAsync();

@@ -21,7 +21,15 @@ Do not include secrets, shell commands to execute, dependency upgrades, or unrel
 The fixed target is Angular 20.1.6 with Angular Material, ASP.NET Core .NET 10 C# 14,
 PostgreSQL 17.9 with PostGIS, Kafka events and Docker Compose. Mobile means Angular PWA.
 Ensure frontend and backend use identical paths, field names and JSON types.
+The fixed backend platform uses the global C# namespace. Generated C# files must not
+declare a namespace. All partial DomainService files share the fixed constructor and fields.
+Reference-data profiles describe actual supplied files. Preserve their source identifiers,
+field meanings and geometry types. Do not invent replacement data when a source is supplied.
 """
+
+
+class OutputLimitExceeded(ValueError):
+    pass
 
 
 class Qwen:
@@ -99,7 +107,7 @@ class Qwen:
             finish_reason=choice.get("finish_reason"),
         )
         if choice.get("finish_reason") == "length":
-            raise ValueError(f"Stage {stage} exceeded output token budget")
+            raise OutputLimitExceeded(f"Stage {stage} exceeded output token budget")
         content = re.sub(
             r"<think>.*?</think>", "", choice["message"]["content"], flags=re.S
         ).strip()
