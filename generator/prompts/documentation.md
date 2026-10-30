@@ -25,6 +25,6 @@ and verification status as pending reports/summary.json. Never label planned fea
 README.md describes product, stack, prerequisites Docker Compose, environment setup using
 python scripts/configure.py, docker compose up -d --build --wait frontend, localhost:8080,
 docker compose --profile checks run --rm acceptance, documentation and evidence locations.
-End README with a BibTeX software citation to https://github.com/pymlex/rwb-app-generator and
-then the exact line: The project is under GPL-3.0 license.
+Do not add a project BibTeX citation or claim a sole author. Attribute the project to the team.
+End README with the exact line: The project is under GPL-3.0 license.
 Keep docs concise but cover all required sections. Each artifact must list the FR IDs it documents.

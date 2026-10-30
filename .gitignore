@@ -20,6 +20,10 @@ output/
 пояснение.txt
 messages.html
 messages.json
+messages*.html
+messages*.json
+*.pdf
+*.PDF
 photos/
 images/
 css/
