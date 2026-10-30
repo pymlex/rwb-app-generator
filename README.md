@@ -9,88 +9,39 @@ The generated stack is Angular 20.1.6 with Angular Material and PWA support, ASP
 The generator runs on the organiser VM. Every application generation request uses the organiser API and the fixed `qwen3.8-27b` model.
 
 ```mermaid
+%%{init: {'class': {'hideEmptyMembersBox': true}}}%%
 classDiagram
     direction TB
-    class Pipeline {
-        +run()
-    }
-    class Qwen {
-        +generate()
-    }
-    class Knowledge {
-        <<module>>
-        +build_index()
-        +retrieve()
-    }
-    class Verification {
-        <<module>>
-        +verify()
-        +report()
-    }
-    class Analysis {
-        requirements
-        roles
-        assumptions
-    }
-    class Blueprint {
-        endpoints
-        entities
-        events
-    }
-    class Checkpoints {
-        <<artifact>>
-    }
-    class JuryQwenAPI {
-        <<external>>
-    }
-    Pipeline *-- Qwen
-    Pipeline --> Knowledge : retrieves regulations
-    Pipeline ..> Analysis : validates source requirements
-    Pipeline ..> Blueprint : shares API contract
-    Pipeline --> Checkpoints : saves stages and usage
-    Pipeline --> Verification : schedules checks
-    Qwen --> JuryQwenAPI : HTTP from organiser VM
+    class Knowledge["Knowledge<br/>SQLite FTS5"]
+    class Pipeline["Pipeline<br/>Analysis, contracts, code"]
+    class Qwen["Organiser API<br/>Qwen3.8-27B"]
+    class Checkpoints["Checkpoints<br/>Cache and usage"]
+    class Verification["Verification<br/>Build, tests, security"]
+    Knowledge --> Pipeline : regulations
+    Pipeline --> Qwen : generate
+    Pipeline --> Checkpoints : save
+    Pipeline --> Verification : validate
 ```
+
 
 The generated deployment separates the interface, domain API, persistent storage and event transport. Domain state and an outbox record commit together. The publisher sends committed events to Kafka.
 
 ```mermaid
+%%{init: {'class': {'hideEmptyMembersBox': true}}}%%
 classDiagram
-    direction LR
-    class AngularPWA {
-        <<component>>
-        Angular Material
-        Admin and mobile views
-    }
-    class Nginx {
-        <<component>>
-        Static assets and API proxy
-    }
-    class AspNetBackend {
-        <<component>>
-        ASP.NET Core
-        Authentication and domain operations
-    }
-    class PostgreSQLPostGIS {
-        <<database>>
-        Domain state
-        Audit and outbox
-    }
-    class OutboxPublisher {
-        <<component>>
-        At-least-once delivery
-    }
-    class Kafka {
-        <<broker>>
-        Versioned domain events
-    }
-    AngularPWA --> Nginx : HTTP in demo
-    Nginx --> AspNetBackend : HTTP inside Docker network
-    AspNetBackend --> PostgreSQLPostGIS : transactions
-    AspNetBackend *-- OutboxPublisher
-    OutboxPublisher --> PostgreSQLPostGIS : pending events
-    OutboxPublisher --> Kafka : publish by aggregate ID
+    direction TB
+    class Web["Angular PWA<br/>Nginx"]
+    class Backend["ASP.NET Core<br/>Domain API"]
+    class PostgreSQL["PostgreSQL + PostGIS<br/>State, audit, outbox"]
+    class Publisher["Outbox publisher<br/>Backend service"]
+    class Kafka["Kafka<br/>Domain events"]
+    Web --> Backend : HTTP API
+    Backend --> PostgreSQL : transaction
+    Backend *-- Publisher
+    Publisher --> PostgreSQL : read outbox
+    Publisher --> Kafka : publish
 ```
+
 
 These diagrams describe the target architecture. Deployment and acceptance status are reported separately in the generated evidence.
 
