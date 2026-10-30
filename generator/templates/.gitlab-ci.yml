@@ -1,0 +1,27 @@
+stages: [build, verify, deploy]
+variables:
+  COMPOSE_PROJECT_NAME: "rwb-$CI_PROJECT_ID"
+build:
+  stage: build
+  script:
+    - python3 scripts/configure.py
+    - docker compose --profile checks run --rm lock
+    - docker compose build
+  artifacts:
+    paths: [frontend/package-lock.json]
+verify:
+  stage: verify
+  script:
+    - test -f .env || python3 scripts/configure.py
+    - docker compose up -d --wait frontend
+    - docker compose --profile checks run --rm acceptance
+    - docker compose --profile checks run --rm audit
+  artifacts:
+    when: always
+    paths: [reports/]
+deploy:
+  stage: deploy
+  script:
+    - docker compose up -d --wait frontend
+  environment:
+    name: review

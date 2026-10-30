@@ -1,0 +1,12 @@
+.env
+.env.*
+!.env.example
+node_modules/
+bin/
+obj/
+dist/
+.angular/
+__pycache__/
+.pipeline/checkpoints/
+.pipeline/events.jsonl
+reports/*.log

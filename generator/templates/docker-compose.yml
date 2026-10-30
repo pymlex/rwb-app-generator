@@ -1,0 +1,94 @@
+services:
+  database:
+    image: postgis/postgis:17-3.5
+    environment:
+      POSTGRES_DB: app
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - database:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U app -d app']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    mem_limit: 512m
+  kafka:
+    image: apache/kafka:4.1.0
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_HEAP_OPTS: -Xms128m -Xmx256m
+    healthcheck:
+      test: [CMD-SHELL, '/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list']
+      interval: 10s
+      timeout: 10s
+      retries: 20
+    mem_limit: 640m
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: Host=database;Database=app;Username=app;Password=${POSTGRES_PASSWORD}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?Set ADMIN_TOKEN}
+      DRIVER_TOKEN: ${DRIVER_TOKEN:?Set DRIVER_TOKEN}
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      ASPNETCORE_ENVIRONMENT: Production
+    depends_on:
+      database:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    mem_limit: 384m
+  frontend:
+    build: ./frontend
+    ports:
+      - '${APP_PORT:-8080}:8080'
+    depends_on: [backend]
+    healthcheck:
+      test: [CMD-SHELL, 'wget -qO- http://127.0.0.1:8080/health/ready || exit 1']
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    mem_limit: 96m
+  lock:
+    image: node:22-bookworm-slim
+    profiles: [checks]
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+    command: [npm, install, --package-lock-only, --ignore-scripts, --no-audit, --no-fund]
+    mem_limit: 512m
+  acceptance:
+    image: python:3.12-alpine
+    profiles: [checks]
+    environment:
+      BASE_URL: http://frontend:8080
+      ADMIN_TOKEN: ${ADMIN_TOKEN}
+      DRIVER_TOKEN: ${DRIVER_TOKEN}
+    volumes:
+      - ./tests:/tests:ro
+    command: [python, -m, unittest, discover, -v, -s, /tests]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
+  audit:
+    image: aquasec/trivy:0.67.2
+    profiles: [checks]
+    volumes:
+      - .:/src:ro
+      - ./reports:/reports
+      - scanner-cache:/root/.cache
+    command: [fs, --scanners, 'vuln,secret', --skip-files, /src/.env, --skip-dirs, '/src/.pipeline,/src/frontend/node_modules', --severity, 'HIGH,CRITICAL', --exit-code, '1', --format, json, --output, /reports/security.json, /src]
+    mem_limit: 512m
+volumes:
+  database:
+  scanner-cache:

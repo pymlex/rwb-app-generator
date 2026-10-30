@@ -1,0 +1,16 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+:root { color-scheme: light; --ink:#172840; --muted:#66758c; --brand:#173d8f; --line:#dce3ed; }
+* { box-sizing:border-box; }
+body { margin:0; font-family:'DM Sans',sans-serif; color:var(--ink); background:#f2f5fa; }
+h1,h2,h3 { font-family:'Space Grotesk',sans-serif; letter-spacing:-.04em; }
+button,input { font:inherit; }
+main { max-width:1440px; margin:auto; padding:32px; }
+mat-card { padding:24px; border:1px solid var(--line); box-shadow:none!important; }
+.grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:20px; }
+.error { color:#a81828; padding:16px; background:#fff0f0; border-radius:8px; }
+.muted { color:var(--muted); }
+table { width:100%; border-collapse:collapse; }
+th,td { text-align:left; padding:14px 16px; border-bottom:1px solid var(--line); }
+th { color:var(--muted); font-weight:500; font-size:12px; text-transform:uppercase; letter-spacing:.06em; }
+mat-form-field { width:100%; }
+@media(max-width:700px) { main { padding:16px; } .grid { grid-template-columns:1fr; } table { display:block; overflow:auto; } }
