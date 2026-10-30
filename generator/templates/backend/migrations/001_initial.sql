@@ -6,3 +6,6 @@ CREATE TABLE IF NOT EXISTS idempotency(key text PRIMARY KEY, created_at timestam
 CREATE TABLE IF NOT EXISTS outbox(id bigserial PRIMARY KEY, aggregate_id text NOT NULL, event_type text NOT NULL, payload jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now(), published_at timestamptz);
 CREATE INDEX IF NOT EXISTS ix_outbox_pending ON outbox(id) WHERE published_at IS NULL;
 INSERT INTO schema_migrations(version) VALUES(1) ON CONFLICT DO NOTHING;
+CREATE TABLE IF NOT EXISTS audit_events(event_id uuid PRIMARY KEY, aggregate_id text NOT NULL, event_type text NOT NULL, actor_id text NOT NULL, payload jsonb NOT NULL, occurred_at timestamptz NOT NULL);
+CREATE INDEX IF NOT EXISTS ix_audit_events_aggregate ON audit_events(aggregate_id,occurred_at DESC);
+CREATE TABLE IF NOT EXISTS api_idempotency(actor_id text NOT NULL,key text NOT NULL,request_hash text NOT NULL,response jsonb NOT NULL,status_code integer NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(actor_id,key));

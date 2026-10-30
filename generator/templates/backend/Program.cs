@@ -21,12 +21,14 @@ builder.Services.AddAuthorization(options =>
     options.AddPolicy("admin", policy => policy.RequireRole("admin"));
     options.AddPolicy("driver", policy => policy.RequireRole("driver", "admin"));
 });
-builder.Services.AddRateLimiter(options => options.AddFixedWindowLimiter("api", limiter =>
+builder.Services.AddRateLimiter(options =>
 {
-    limiter.PermitLimit = 120;
-    limiter.Window = TimeSpan.FromMinutes(1);
-    limiter.QueueLimit = 0;
-}).RejectionStatusCode = 429);
+    options.RejectionStatusCode = 429;
+    options.AddPolicy("api", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 120, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+});
+Domain.Configure(builder.Services, builder.Configuration);
 var app = builder.Build();
 app.UseExceptionHandler();
 app.UseStatusCodePages();
@@ -37,6 +39,7 @@ await app.Services.GetRequiredService<Store>().Initialise();
 await Domain.Initialise(app);
 app.MapOpenApi();
 app.UseSwaggerUI(options => options.SwaggerEndpoint("/openapi/v1.json", "API v1"));
+app.MapGet("/api/v1/me", (HttpContext context) => Results.Ok(new { subject = Actor.From(context).Subject, role = context.User.IsInRole("admin") ? "admin" : "driver" })).RequireAuthorization().RequireRateLimiting("api");
 app.MapGet("/health/live", () => Results.Ok(new { status = "alive" }));
 app.MapGet("/health/ready", async (NpgsqlDataSource database) =>
 {

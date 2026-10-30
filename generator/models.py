@@ -81,3 +81,17 @@ class Evidence(StrictModel):
     files: list[str]
     checks: list[str]
     status: Literal["passed", "failed", "unverified"]
+
+
+class ReviewIssue(StrictModel):
+    severity: Literal["critical", "high", "medium"]
+    path: str
+    source_quote: str
+    requirement_ids: list[str]
+    defect: str
+    correction: str
+
+
+class BackendReview(StrictModel):
+    passes_static_review: bool
+    issues: list[ReviewIssue]
