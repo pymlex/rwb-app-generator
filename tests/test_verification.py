@@ -380,6 +380,26 @@ def test_sast_is_added_without_reordering_existing_checks(modular_project, monke
     checks = verify(modular_project, deploy=True)
     assert [check.name for check in checks] == [
         'structure', 'compose-config', 'dependency-lock', 'backend-dependency-lock',
-        'build', 'unit', 'dependency-audit', 'static-analysis', 'deployment', 'acceptance',
+        'build', 'unit', 'dependency-audit', 'static-analysis', 'deployment', 'acceptance', 'openapi-lint', 'api-contract',
     ]
     assert next(check for check in checks if check.name == 'static-analysis').status == 'not_run'
+
+
+@pytest.mark.parametrize('deployed', [True, False])
+def test_runtime_contract_checks_depend_on_deployment(modular_project, monkeypatch, deployed):
+    import generator.verification as verification
+
+    invocations = []
+
+    def fake_run(root, name, command, execute, sudo_password=None):
+        invocations.append((name, execute))
+        status = 'passed' if execute else 'not_run'
+        if name == 'deployment' and not deployed:
+            status = 'failed'
+        return Check(name=name, command=command, status=status,
+                     exit_code=0 if status == 'passed' else None, duration_seconds=0, log='')
+
+    monkeypatch.setattr(verification, 'run_check', fake_run)
+    verification.verify(modular_project, execute=True, deploy=True)
+    assert dict(invocations)['openapi-lint'] is deployed
+    assert dict(invocations)['api-contract'] is deployed

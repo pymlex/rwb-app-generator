@@ -162,6 +162,33 @@ services:
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     mem_limit: 768m
+  spectral:
+    build:
+      context: .
+      dockerfile: checks/spectral/Dockerfile
+    profiles: [checks]
+    volumes:
+      - ./reports:/reports
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 384m
+  schemathesis:
+    build:
+      context: .
+      dockerfile: checks/schemathesis/Dockerfile
+    profiles: [checks]
+    environment:
+      ADMIN_TOKEN: ${ADMIN_TOKEN}
+      HOME: /tmp
+    volumes:
+      - ./reports:/reports
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 384m
 volumes:
   database:
   scanner-cache:

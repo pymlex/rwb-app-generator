@@ -203,6 +203,14 @@ def verify(
                 sudo_password,
             )
         )
+        for name, service in [("openapi-lint", "spectral"), ("api-contract", "schemathesis")]:
+            checks.append(
+                run_check(
+                    root, name,
+                    ["docker", "compose", "--profile", "checks", "run", "--rm", "--build", service],
+                    execute and deployed, sudo_password,
+                )
+            )
     write_json(root / "reports" / "checks.json", [check.model_dump() for check in checks])
     return checks
 

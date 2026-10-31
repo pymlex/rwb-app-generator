@@ -89,3 +89,20 @@ def test_gitlab_stages_keep_command_order_and_deploy_only_default_branch():
     assert '$CI_PIPELINE_SOURCE != "merge_request_event"' in rule
     assert '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH' in rule
     assert config['report']['when'] == 'always'
+
+
+def test_contract_services_use_live_openapi_and_keep_reports_separate():
+    services = compose()['services']
+    for name in ('spectral', 'schemathesis'):
+        assert services[name]['profiles'] == ['checks']
+        assert services[name]['read_only'] is True
+        assert './reports:/reports' in services[name]['volumes']
+    spectral = (TEMPLATES / 'checks/spectral/run.cjs').read_text()
+    assert "http://frontend:8080/openapi/v1.json" in spectral
+    assert "redirect: 'error'" in spectral
+    assert '/reports/openapi.json' in spectral and '/reports/spectral.json' in spectral
+    assert "'--fail-severity', 'warn'" in spectral
+    schema = (TEMPLATES / 'checks/schemathesis/run.py').read_text()
+    assert "'--checks', 'all'" in schema
+    assert "'--output-sanitize', 'true'" in schema
+    assert '/reports/schemathesis.xml' in schema

@@ -49,6 +49,8 @@ deploy:
     - docker compose up -d --wait --wait-timeout 180 frontend
     - docker compose --profile checks run --rm acceptance > reports/acceptance.log 2>&1 || { cat reports/acceptance.log; exit 1; }
     - cat reports/acceptance.log
+    - docker compose --profile checks run --rm --build spectral
+    - docker compose --profile checks run --rm --build schemathesis
   environment:
     name: review
 report:
