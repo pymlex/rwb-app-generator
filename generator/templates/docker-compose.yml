@@ -1,6 +1,7 @@
 services:
   database:
-    image: postgis/postgis:17-3.5
+    build: ./database
+    image: rwb-app-generator/postgis:17.9
     environment:
       POSTGRES_DB: app
       POSTGRES_USER: app
@@ -66,6 +67,24 @@ services:
       - ./frontend:/app
     command: [npm, install, --package-lock-only, --ignore-scripts, --no-audit, --no-fund]
     mem_limit: 512m
+  backend-lock:
+    image: mcr.microsoft.com/dotnet/sdk:10.0
+    profiles: [checks]
+    working_dir: /app
+    volumes:
+      - ./backend:/app
+      - nuget-cache:/root/.nuget/packages
+    command: [dotnet, restore, App.csproj, --use-lock-file]
+    mem_limit: 512m
+  unit:
+    build:
+      context: .
+      dockerfile: backend-unit/Dockerfile
+    profiles: [checks]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 256m
   acceptance:
     image: python:3.12-alpine
     profiles: [checks]
@@ -92,3 +111,4 @@ services:
 volumes:
   database:
   scanner-cache:
+  nuget-cache:

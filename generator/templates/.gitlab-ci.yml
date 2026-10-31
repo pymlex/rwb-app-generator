@@ -1,27 +1,29 @@
-stages: [build, verify, deploy]
+stages: [release]
 variables:
   COMPOSE_PROJECT_NAME: "rwb-$CI_PROJECT_ID"
-build:
-  stage: build
+release:
+  stage: release
+  resource_group: "rwb-$CI_PROJECT_ID"
+  tags: [organiser-vm]
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
   script:
-    - python3 scripts/configure.py
+    - mkdir -p reports
+    - if test -n "${APP_ENV_FILE:-}"; then cp "$APP_ENV_FILE" .env; fi
+    - test -f .env || { echo "Provide the protected APP_ENV_FILE file variable with stable application credentials"; exit 1; }
+    - chmod 600 .env
+    - docker compose config --quiet
     - docker compose --profile checks run --rm lock
-    - docker compose build
-  artifacts:
-    paths: [frontend/package-lock.json]
-verify:
-  stage: verify
-  script:
-    - test -f .env || python3 scripts/configure.py
-    - docker compose up -d --wait frontend
-    - docker compose --profile checks run --rm acceptance
+    - docker compose --profile checks run --rm backend-lock
+    - docker compose --parallel 1 build
+    - docker compose --profile checks run --rm --build unit > reports/unit.log 2>&1 || { cat reports/unit.log; exit 1; }
+    - cat reports/unit.log
     - docker compose --profile checks run --rm audit
+    - docker compose up -d --wait --wait-timeout 180 frontend
+    - docker compose --profile checks run --rm acceptance > reports/acceptance.log 2>&1 || { cat reports/acceptance.log; exit 1; }
+    - cat reports/acceptance.log
   artifacts:
     when: always
-    paths: [reports/]
-deploy:
-  stage: deploy
-  script:
-    - docker compose up -d --wait frontend
+    paths: [reports/, frontend/package-lock.json]
   environment:
     name: review

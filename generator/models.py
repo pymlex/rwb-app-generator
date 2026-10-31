@@ -81,3 +81,46 @@ class Evidence(StrictModel):
     files: list[str]
     checks: list[str]
     status: Literal["passed", "failed", "unverified"]
+
+
+class ReviewIssue(StrictModel):
+    severity: Literal["critical", "high", "medium"]
+    path: str
+    source_quote: str
+    requirement_ids: list[str]
+    defect: str
+    correction: str
+
+
+class BackendReview(StrictModel):
+    passes_static_review: bool
+    issues: list[ReviewIssue]
+
+
+class AssertionEvidence(StrictModel):
+    path: str
+    test_name: str = Field(pattern=r"^test_FR_[0-9]{3}")
+    source_quote: str = Field(min_length=1)
+    criterion: str
+
+
+class RequirementReview(StrictModel):
+    requirement_id: str = Field(pattern=r"^FR-[0-9]{3}$")
+    status: Literal["passed", "failed"]
+    evidence: list[AssertionEvidence]
+    missing_criteria: list[str]
+
+
+class RequirementReviews(StrictModel):
+    requirements: list[RequirementReview]
+
+
+class WorkPackage(StrictModel):
+    methods: list[str] = Field(min_length=1, max_length=3)
+    requirement_ids: list[str]
+    endpoint_paths: list[str]
+    purpose: str
+
+
+class ImplementationPlan(StrictModel):
+    packages: list[WorkPackage] = Field(min_length=1)

@@ -2,11 +2,12 @@ import json
 import re
 import time
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
 
-from generator.budget import plan_budget, retry_delay
+from generator.budget import admission_delay, plan_budget, retry_delay
 from generator.config import Settings
 from generator.storage import digest, event, write_json
 
@@ -21,13 +22,51 @@ Do not include secrets, shell commands to execute, dependency upgrades, or unrel
 The fixed target is Angular 20.1.6 with Angular Material, ASP.NET Core .NET 10 C# 14,
 PostgreSQL 17.9 with PostGIS, Kafka events and Docker Compose. Mobile means Angular PWA.
 Ensure frontend and backend use identical paths, field names and JSON types.
+The fixed backend platform uses the global C# namespace. Generated C# files must not
+declare a namespace. All partial DomainService files share the fixed constructor and fields.
+Reference-data profiles describe actual supplied files. Preserve their source identifiers,
+field meanings and geometry types. Do not invent replacement data when a source is supplied.
 """
+
+
+class OutputLimitExceeded(ValueError):
+    pass
 
 
 class Qwen:
     def __init__(self, settings: Settings, run: Path):
         self.settings = settings
         self.run = run
+
+    def _admit(self, stage: str, budget):
+        quota_identity = digest(self.settings.base_url + "|" + self.settings.api_key)
+        path = self.run / "events.jsonl"
+        while True:
+            events = (
+                [json.loads(row) for row in path.read_text(encoding="utf-8").splitlines() if row]
+                if path.exists()
+                else []
+            )
+            delay = admission_delay(
+                events,
+                budget.reservation,
+                self.settings.tpm_limit,
+                quota_identity,
+                datetime.now(UTC),
+            )
+            if delay <= 0:
+                return
+            pause = min(60, delay)
+            event(
+                self.run,
+                "admission_window_wait",
+                stage=stage,
+                seconds=pause,
+                reservation=budget.reservation,
+                quota_identity=quota_identity,
+                accounting="conservative_local_completion_window_61s",
+            )
+            time.sleep(pause)
 
     def generate(self, stage: str, instruction: str, context: str, schema):
         prompt = (
@@ -48,10 +87,13 @@ class Qwen:
             {"role": "system", "content": SYSTEM},
             {"role": "user", "content": prompt},
         ]
-        with httpx.Client(timeout=self.settings.timeout) as client:
+        with httpx.Client(
+            timeout=self.settings.timeout, trust_env=False, follow_redirects=False
+        ) as client:
             budget = plan_budget(client, self.settings, stage, messages)
             event(self.run, "token_budget", stage=stage, **asdict(budget))
             for attempt in range(3):
+                self._admit(stage, budget)
                 event(
                     self.run,
                     "model_http_attempt",
@@ -97,9 +139,10 @@ class Qwen:
             duration_seconds=round(time.monotonic() - started, 3),
             usage=data.get("usage", {}),
             finish_reason=choice.get("finish_reason"),
+            quota_identity=digest(self.settings.base_url + "|" + self.settings.api_key),
         )
         if choice.get("finish_reason") == "length":
-            raise ValueError(f"Stage {stage} exceeded output token budget")
+            raise OutputLimitExceeded(f"Stage {stage} exceeded output token budget")
         content = re.sub(
             r"<think>.*?</think>", "", choice["message"]["content"], flags=re.S
         ).strip()

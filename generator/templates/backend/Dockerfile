@@ -1,7 +1,8 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /source
 COPY App.csproj .
-RUN dotnet restore
+COPY packages.lock.json .
+RUN dotnet restore --locked-mode
 COPY . .
 RUN dotnet publish -c Release -o /app --no-restore
 

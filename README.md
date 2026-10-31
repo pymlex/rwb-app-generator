@@ -2,7 +2,7 @@
 
 Team TLE builds a requirements-driven application generator for the RWB hackathon. Business requirements are the domain input. Qwen3.8-27B produces system analysis, API contracts, domain code, an Angular interface, acceptance tests and handover documentation.
 
-The generated stack is Angular 20.1.6 with Angular Material and PWA support, ASP.NET Core on .NET 10, PostgreSQL with PostGIS, Kafka and Docker Compose. Python orchestrates generation. Corporate documentation is indexed locally with SQLite FTS5 and retrieved with source hashes.
+The generated stack is Angular 20.1.6 with Angular Material and PWA support, ASP.NET Core on .NET 10, PostgreSQL with PostGIS, Kafka and Docker Compose. Python and LangGraph coordinate specialist role agents. Corporate documentation is indexed locally with SQLite FTS5 and retrieved with source hashes.
 
 ## Architecture
 
@@ -13,7 +13,7 @@ The generator runs on the organiser VM. Every application generation request use
 classDiagram
     direction TB
     class Knowledge["Knowledge<br/>SQLite FTS5"]
-    class Pipeline["Pipeline<br/>Analysis, contracts, code"]
+    class Pipeline["LangGraph MAS<br/>Specialist role agents"]
     class Qwen["Organiser API<br/>Qwen3.8-27B"]
     class Checkpoints["Checkpoints<br/>Cache and usage"]
     class Verification["Verification<br/>Build, tests, security"]
@@ -43,6 +43,8 @@ classDiagram
 ```
 
 
+Role agents exchange typed contracts and artifact references instead of accumulating a shared transcript. Each agent can search the local knowledge index and read allowlisted artifacts. Build and independent review gates route concrete failures back to the responsible worker before downstream generation. See [agent design and research rationale](docs/agent-design.md) and [source-requirement checklist](docs/requirements-compliance.md).
+
 These diagrams describe the target architecture. Deployment and acceptance status are reported separately in the generated evidence.
 
 ## Generation
@@ -52,6 +54,7 @@ Run generation, builds, tests and deployment on the organiser VM. Python 3.12 or
 ```bash
 python -m venv .venv
 source .venv/bin/activate
+python -m pip install -r requirements.lock
 python -m pip install -e ".[dev]"
 export QWEN_BASE_URL=http://10.10.10.10:4000/v1
 read -rs -p 'Qwen API key: ' QWEN_API_KEY
@@ -59,6 +62,17 @@ export QWEN_API_KEY
 python main.py index knowledge/sources
 python main.py generate examples/parking.md --answers examples/parking-answers.json --output runs/parking
 ```
+
+To supply reference data, place `spb.json` and `response.json` in a local folder and run:
+
+```bash
+python main.py generate examples/parking.md --answers examples/parking-answers.json --data /path/to/reference-data --output runs/parking
+```
+
+Only top-level `*.json` files are copied to `backend/data` inside the output. Each must
+be valid UTF-8 JSON, at most 50 MiB, with at most 100 MiB combined. All selected files
+are validated before copying or model calls. Symlinks are rejected. Reference files
+are untrusted data; their contents do not authorise commands or network requests.
 
 Source PDF files, the chat export and real credentials are excluded from Git. Derived regulations and structured requirements may be versioned. Keep private deployment configuration on the VM.
 
@@ -81,6 +95,8 @@ Checks use fixed Docker commands. The model cannot select host shell commands or
 
 Each output contains `reports/checks.json`, individual check logs, `reports/security.json`, `reports/traceability.json`, `reports/summary.json` and a readable verification report. A check that was not executed is reported as `not_run`. Generated requirement links describe intended coverage and do not prove that a requirement passed.
 
+A requirement passes only when named runtime tests succeed and independent assertion review identifies concrete checks for its acceptance criteria. Runtime verification and release readiness are reported separately.
+
 The parking case is a preparation fixture. No parking-specific code is built into the generator. A second requirements file uses the same stages and platform templates.
 
 ## Development
@@ -91,6 +107,8 @@ python -m ruff check .
 ```
 
 Core modules are under `generator/`. Role instructions are under `generator/prompts/`. Target stack files are under `generator/templates/`. See [implementation status](docs/status.md), [architecture decisions](docs/architecture.md) and [evaluation procedure](docs/evaluation.md).
+
+GitHub CI uses the repository's `rwb-vm` self-hosted runner on the organiser VM. It runs without sudo or Docker access. Generated GitLab release jobs require an `organiser-vm` runner and a protected `APP_ENV_FILE` file variable containing stable application credentials. The deployment operator supplies Docker access separately.
 
 ## Collaboration and releases
 

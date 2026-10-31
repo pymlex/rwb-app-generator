@@ -58,15 +58,24 @@ def run_check(
 def structural(root: Path) -> Check:
     required = [
         "backend/Domain.cs",
+        "backend/DomainModels.cs",
         "backend/migrations/002_domain.sql",
         "frontend/src/app.ts",
-        "tests/test_acceptance.py",
+        "frontend/src/app.types.ts",
+        "frontend/src/app.html",
+        "frontend/src/app.css",
         "docs/system-analysis.md",
         "docker-compose.yml",
     ]
     missing = [name for name in required if not (root / name).is_file()]
     defects = [f"Missing: {name}" for name in missing]
-    for name in ["backend/Domain.cs", "frontend/src/app.ts"]:
+    if not list((root / "tests").glob("test_acceptance*.py")):
+        defects.append("Missing: tests/test_acceptance*.py")
+    services = sorted((root / "backend").glob("DomainService*.cs"))
+    if not services:
+        defects.append("Missing: backend/DomainService*.cs")
+    sources = required[:2] + required[3:7] + [str(path.relative_to(root)) for path in services]
+    for name in sources:
         if (root / name).is_file():
             content = (root / name).read_text(encoding="utf-8")
             if re.search(r"\bTODO\b|NotImplementedException|YOUR_API_KEY", content):
@@ -78,6 +87,25 @@ def structural(root: Path) -> Check:
         exit_code=int(bool(defects)),
         duration_seconds=0,
         log="\n".join(defects) or "Required artifacts present",
+    )
+
+
+def backend_build(root: Path, execute: bool, sudo_password: str | None = None) -> Check:
+    locked = run_check(
+        root,
+        "backend-dependency-lock",
+        ["docker", "compose", "--profile", "checks", "run", "--rm", "backend-lock"],
+        execute,
+        sudo_password,
+    )
+    if locked.status == "failed":
+        return locked
+    return run_check(
+        root,
+        "backend-build",
+        ["docker", "compose", "build", "backend"],
+        execute,
+        sudo_password,
     )
 
 
@@ -105,10 +133,28 @@ def verify(
     )
     checks.append(
         run_check(
+            root,
+            "backend-dependency-lock",
+            ["docker", "compose", "--profile", "checks", "run", "--rm", "backend-lock"],
+            execute,
+            sudo_password,
+        )
+    )
+    checks.append(
+        run_check(
             root, "build", ["docker", "compose", "--parallel", "1", "build"], execute, sudo_password
         )
     )
     build_passed = checks[-1].status == "passed"
+    checks.append(
+        run_check(
+            root,
+            "unit",
+            ["docker", "compose", "--profile", "checks", "run", "--rm", "--build", "unit"],
+            execute and build_passed,
+            sudo_password,
+        )
+    )
     checks.append(
         run_check(
             root,
@@ -147,11 +193,58 @@ def report(root: Path, analysis: Analysis, checks: list[Check], elapsed: float) 
     manifest = json.loads(
         (root / ".pipeline" / "artifact-manifest.json").read_text(encoding="utf-8")
     )
+    acceptance = next((check for check in checks if check.name == "acceptance"), None)
+    named_tests = []
+    if acceptance:
+        named_tests = [
+            {
+                "name": match[1] + " (" + match[3] + ")",
+                "requirement_id": "FR-" + match[2],
+                "status": "passed"
+                if match[4] == "ok"
+                else "failed"
+                if match[4] in {"FAIL", "ERROR"}
+                else "not_run",
+            }
+            for match in re.finditer(
+                r"\b(test_FR_(\d{3})\w*)\s+\(([^)\n]+)\)\s+\.\.\.\s+(ok|FAIL|ERROR|skipped[^\n]*)",
+                acceptance.log,
+            )
+        ]
+    write_json(root / "reports" / "requirement-tests.json", named_tests)
+    review_path = root / "reports" / "requirement-review.json"
+    review_entries = (
+        json.loads(review_path.read_text(encoding="utf-8")) if review_path.is_file() else []
+    )
+    reviewed = {entry["requirement_id"]: entry for entry in review_entries}
+    known_ids = {requirement.id for requirement in analysis.requirements}
+    if len(reviewed) != len(review_entries) or set(reviewed) - known_ids:
+        raise ValueError("Requirement review contains duplicate or unknown requirement identifiers")
     evidence = []
     for requirement in analysis.requirements:
         files = [entry["path"] for entry in manifest if requirement.id in entry["requirement_ids"]]
+        tests = [test for test in named_tests if test["requirement_id"] == requirement.id]
+        review = reviewed.get(requirement.id, {})
+        status = "unverified"
+        if any(test["status"] == "failed" for test in tests) or review.get("status") == "failed":
+            status = "failed"
+        elif (
+            acceptance
+            and acceptance.status == "passed"
+            and tests
+            and all(test["status"] == "passed" for test in tests)
+            and review.get("status") == "passed"
+            and review.get("evidence")
+            and files
+        ):
+            status = "passed"
         evidence.append(
-            Evidence(requirement_id=requirement.id, files=files, checks=passed, status="unverified")
+            Evidence(
+                requirement_id=requirement.id,
+                files=files,
+                checks=[test["name"] for test in tests],
+                status=status,
+            )
         )
     write_json(root / "reports" / "traceability.json", [entry.model_dump() for entry in evidence])
     events = [
@@ -170,8 +263,16 @@ def report(root: Path, analysis: Analysis, checks: list[Check], elapsed: float) 
     )
     failed = any(check.status == "failed" for check in checks)
     complete = all(check.status == "passed" for check in checks) and "acceptance" in passed
+    must_ids = {
+        requirement.id for requirement in analysis.requirements if requirement.priority == "must"
+    }
+    covered = {entry.requirement_id for entry in evidence if entry.status == "passed"}
+    release_ready = complete and must_ids <= covered
     result = {
-        "status": "failed" if failed else "verified" if complete else "generated_unverified",
+        "status": "failed" if failed else "verified" if release_ready else "generated_unverified",
+        "runtime_verified": complete,
+        "release_ready": release_ready,
+        "coverage_status": "passed" if must_ids <= covered else "unverified",
         "duration_seconds": round(elapsed, 2),
         "model_calls": len(calls),
         "repairs": sum(entry["kind"] == "repair_started" for entry in events),
@@ -206,7 +307,7 @@ def report(root: Path, analysis: Analysis, checks: list[Check], elapsed: float) 
             "",
             "## Requirement evidence",
             "",
-            "Artifact links identify intended coverage. Individual requirements remain unverified until named acceptance assertions are independently reviewed.",
+            "Artifact links identify intended coverage. A requirement passes only with named successful runtime tests and independent assertion review in requirement-review.json. Missing evidence remains unverified.",
             "",
             "## Resource usage",
             "",
