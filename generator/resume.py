@@ -6,15 +6,22 @@ from pathlib import Path
 from generator.worker import csharp_members
 
 
-TASK_METHOD = re.compile(
-    r"^\s*public\s+(?:(?:async|virtual|override|sealed|new|static)\s+)*"
-    r"Task(?:<[^;{}=\n]+>)?\s+([A-Za-z_]\w*)\s*\("
+METHOD_SIGNATURE = (
+    r"(?P<signature>Task(?:<[^;{}=]+>)?\s+(?P<name>[A-Za-z_]\w*)\s*\([^;{}()]*\))"
 )
-INTERFACE_METHOD = re.compile(r"(?m)^\s*(?:public\s+)?Task(?:<[^;{}=\n]+>)?\s+([A-Za-z_]\w*)\s*\(")
+TASK_METHOD = re.compile(
+    r"^\s*public\s+(?:(?:async|virtual|override|sealed|new|static)\s+)*" + METHOD_SIGNATURE
+)
+INTERFACE_METHOD = re.compile(
+    r"(?m)^\s*(?:public\s+)?" + METHOD_SIGNATURE + r"\s*;"
+)
 
 
 def recover_service_packages(output: Path, interface_source: str) -> list[dict]:
-    contract = set(INTERFACE_METHOD.findall(interface_source))
+    contract = {
+        re.sub(r"\s+", "", match["signature"])
+        for match in INTERFACE_METHOD.finditer(interface_source)
+    }
     checkpoints = output / ".pipeline" / "checkpoints"
     records = []
     assigned = set()
@@ -32,10 +39,12 @@ def recover_service_packages(output: Path, interface_source: str) -> list[dict]:
             body = source[member["start"] : member["end"]]
             declaration = TASK_METHOD.match(body)
             if declaration:
-                methods.append(declaration[1])
+                methods.append(declaration["name"])
+                if re.sub(r"\s+", "", declaration["signature"]) not in contract:
+                    unsupported = True
             elif re.match(r"\s*public\b[^;{}=]*\(", body):
                 unsupported = True
-        if unsupported or not methods or not set(methods) <= contract:
+        if unsupported or not methods:
             continue
         artifact = None
         relative = path.relative_to(output).as_posix()
