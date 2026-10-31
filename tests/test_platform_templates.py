@@ -43,3 +43,16 @@ def test_sast_scans_fixed_rules_and_blocks_errors():
     fallback = compose()['services']['sast-dotnet']
     assert '-p:SastFallback=true' in fallback['command']
     assert '-p:ErrorLog=/reports/sast.json,version=2.1' in fallback['command']
+
+
+def test_nginx_policies_allow_pwa_maps_fonts_and_geolocation():
+    config = (TEMPLATES / 'frontend/nginx.conf').read_text()
+    csp = next(line for line in config.splitlines() if 'Content-Security-Policy' in line)
+    for directive in ("default-src 'self'", "frame-ancestors 'none'", "object-src 'none'",
+                      "worker-src 'self'", "manifest-src 'self'", "script-src 'self'"):
+        assert directive in csp
+    assert 'https://tile.openstreetmap.org' in csp
+    assert 'https://*.tile.openstreetmap.org' in csp
+    assert 'https://fonts.googleapis.com' in csp and 'https://fonts.gstatic.com' in csp
+    assert csp.endswith('always;')
+    assert 'Permissions-Policy "geolocation=(self), camera=(), microphone=(), payment=()" always;' in config
