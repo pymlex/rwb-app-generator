@@ -136,3 +136,15 @@ def test_digest_inventory_covers_dockerfiles_and_compose_without_guessing():
         assert entry['image'] in documentation
         if entry['kind'] == 'registry':
             assert entry['command'].startswith('docker buildx imagetools inspect ')
+
+
+def test_audit_build_covers_whole_project_without_sending_env_files():
+    service = compose()['services']['audit']
+    assert service['build']['dockerfile'] == 'checks/audit/Dockerfile'
+    source = (TEMPLATES / service['build']['dockerfile']).read_text()
+    assert 'COPY . /src' in source
+    exclusions = (TEMPLATES / 'checks/audit/Dockerfile.dockerignore').read_text().splitlines()
+    assert {'.env', '.env.*', '**/.env', '**/.env.*', '.git', '.pipeline'} <= set(exclusions)
+    for required in ('database', 'checks', 'docs', 'docker-compose.yml', '.gitlab-ci.yml'):
+        assert required not in exclusions
+    assert all('/src' not in volume for volume in service['volumes'])

@@ -175,6 +175,13 @@ def verify(
     )
     checks.append(
         run_check(
+            root, "audit-source-build",
+            ["docker", "compose", "--profile", "checks", "build", "audit"],
+            execute and build_passed, sudo_password,
+        )
+    )
+    checks.append(
+        run_check(
             root,
             "dependency-audit",
             ["docker", "compose", "--profile", "checks", "run", "--rm", "audit"],

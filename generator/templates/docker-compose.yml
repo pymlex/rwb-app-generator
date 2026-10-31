@@ -112,18 +112,15 @@ services:
     security_opt: [no-new-privileges:true]
     mem_limit: 128m
   audit:
+    build:
+      context: .
+      dockerfile: checks/audit/Dockerfile
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     tmpfs: [/tmp]
-    image: aquasec/trivy:0.67.2
     profiles: [checks]
     volumes:
-      - ./backend:/src/backend:ro
-      - ./backend-unit:/src/backend-unit:ro
-      - ./frontend:/src/frontend:ro
-      - ./tests:/src/tests:ro
-      - ./scripts:/src/scripts:ro
       - ./reports:/reports
       - scanner-cache:/root/.cache
     command: [fs, --scanners, 'vuln,secret', --skip-files, /src/.env, --skip-dirs, '/src/.pipeline,/src/frontend/node_modules', --severity, 'HIGH,CRITICAL', --exit-code, '1', --format, json, --output, /reports/security.json, /src]

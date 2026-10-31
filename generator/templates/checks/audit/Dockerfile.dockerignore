@@ -1,0 +1,7 @@
+.env
+.env.*
+**/.env
+**/.env.*
+.git
+.pipeline
+frontend/node_modules

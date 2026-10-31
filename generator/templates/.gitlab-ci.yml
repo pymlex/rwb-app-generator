@@ -38,6 +38,7 @@ security:
   extends: .platform
   stage: security
   script:
+    - docker compose --profile checks build audit
     - docker compose --profile checks run --rm audit
     - docker compose --profile checks run --rm sast
 deploy:
