@@ -400,7 +400,9 @@ def test_runtime_contract_checks_depend_on_deployment(modular_project, monkeypat
                      exit_code=0 if status == 'passed' else None, duration_seconds=0, log='')
 
     monkeypatch.setattr(verification, 'run_check', fake_run)
+    monkeypatch.setenv('OWNERSHIP_SCENARIO', '{}')
     verification.verify(modular_project, execute=True, deploy=True)
     assert dict(invocations)['openapi-lint'] is deployed
     assert dict(invocations)['api-contract'] is deployed
     assert dict(invocations)['ui-smoke'] is deployed
+    assert dict(invocations)['owner-isolation'] is deployed

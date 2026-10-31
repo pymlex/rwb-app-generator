@@ -177,3 +177,61 @@ def test_ci_sast_selection_rejects_unexplained_fallback():
     assert select('dotnet', 'VM network unavailable') == (
         'sast-dotnet', {'engine': 'dotnet', 'reason': 'VM network unavailable'},
     )
+
+
+def test_named_driver_configuration_is_optional_and_legacy_token_stays_required():
+    services = compose()['services']
+    assert services['backend']['environment']['DRIVER_TOKEN'] == '${DRIVER_TOKEN:?Set DRIVER_TOKEN}'
+    assert services['backend']['environment']['DRIVER_TOKENS'] == '${DRIVER_TOKENS:-}'
+    program = (TEMPLATES / 'backend/Program.cs').read_text()
+    assert program.index('foreach (var role in new[] { "admin", "driver" })') < program.index('foreach (var driver in DriverIdentities.Parse(configuration))')
+    assert 'DriverIdentities.Parse(builder.Configuration);' in program
+    runner = (TEMPLATES / 'backend-unit/Program.cs').read_text()
+    assert 'IdentityAcceptance.Run' in runner
+    assert 'Known limitation until VM acceptance' in (TEMPLATES / 'checks/IDENTITIES.md').read_text()
+
+
+def test_real_domain_ownership_acceptance_rejects_foreign_access_and_state_changes():
+    import copy
+    import runpy
+
+    import pytest
+
+    verify = runpy.run_path(str(TEMPLATES / 'checks/ownership/run.py'))['verify_ownership']
+    scenario = {'create': {'path': '/api/v1/items', 'body': {'name': '$unique'}},
+                'read': '/api/v1/items/{id}',
+                'mutate': {'path': '/api/v1/items/{id}', 'body': {'name': 'changed'}}}
+    state = {'id': '42', 'name': 'original'}
+    calls = []
+    leak = False
+    corrupt = False
+
+    def request(method, path, token, body=None):
+        calls.append((method, path, token))
+        if method == 'POST':
+            return 201, {'id': '42'}
+        if token == 'second':
+            if corrupt and method == 'PATCH':
+                state['name'] = 'changed'
+            return (200 if leak else 404), None
+        return 200, copy.deepcopy(state)
+
+    assert verify(scenario, 'alice:first,bob:second', request)['status'] == 'passed'
+    assert ('PATCH', '/api/v1/items/42', 'second') in calls
+    assert calls[-1] == ('PATCH', '/api/v1/items/42', 'first')
+    leak = True
+    with pytest.raises(ValueError, match='Foreign read'):
+        verify(scenario, 'alice:first,bob:second', request)
+    leak = False
+    corrupt = True
+    with pytest.raises(ValueError, match='changed persisted'):
+        verify(scenario, 'alice:first,bob:second', request)
+    with pytest.raises(ValueError, match='at least two'):
+        verify(scenario, '', request)
+    corrupt = False
+
+    def missing_mutation(method, path, token, body=None):
+        return (404, None) if method == 'PATCH' else request(method, path, token, body)
+
+    with pytest.raises(ValueError, match='Owner mutation control'):
+        verify(scenario, 'alice:first,bob:second', missing_mutation)

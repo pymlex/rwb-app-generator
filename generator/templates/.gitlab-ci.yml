@@ -56,6 +56,7 @@ deploy:
     - docker compose --profile checks run --rm --build spectral
     - docker compose --profile checks run --rm --build schemathesis
     - docker compose --profile checks run --rm --build e2e
+    - if test -n "${OWNERSHIP_SCENARIO:-}"; then docker compose --profile checks run --rm ownership-acceptance; fi
   environment:
     name: review
 report:

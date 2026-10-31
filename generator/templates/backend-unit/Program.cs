@@ -18,7 +18,8 @@ internal static class Runner
             ("Actor preserves string driver subjects and role boundaries", DriverIdentity),
             ("Actor recognizes the admin role independently of subject text", AdminIdentity),
             ("Actor rejects an identity missing its subject", MissingIdentityRejected),
-            ("OperationResult preserves successful response status and payload", SuccessResult)
+            ("OperationResult preserves successful response status and payload", SuccessResult),
+            ("Named driver tokens and owner isolation pass real HTTP acceptance", IdentityAcceptance.Run)
         };
         foreach (var status in new[] { 400, 403, 409, 422 })
             cases.Add(($"OperationResult preserves problem response {status}", () => ProblemResult(status)));

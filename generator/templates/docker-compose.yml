@@ -41,6 +41,7 @@ services:
       DATABASE_URL: Host=database;Database=app;Username=app;Password=${POSTGRES_PASSWORD}
       ADMIN_TOKEN: ${ADMIN_TOKEN:?Set ADMIN_TOKEN}
       DRIVER_TOKEN: ${DRIVER_TOKEN:?Set DRIVER_TOKEN}
+      DRIVER_TOKENS: ${DRIVER_TOKENS:-}
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       ASPNETCORE_ENVIRONMENT: Production
     depends_on:
@@ -107,6 +108,7 @@ services:
       BASE_URL: http://frontend:8080
       ADMIN_TOKEN: ${ADMIN_TOKEN}
       DRIVER_TOKEN: ${DRIVER_TOKEN}
+      DRIVER_TOKENS: ${DRIVER_TOKENS:-}
     volumes:
       - ./tests:/tests:ro
     command: [python, -m, unittest, discover, -v, -s, /tests]
@@ -210,6 +212,21 @@ services:
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     mem_limit: 768m
+  ownership-acceptance:
+    image: python:3.12-alpine
+    profiles: [checks]
+    environment:
+      DRIVER_TOKENS: ${DRIVER_TOKENS:-}
+      OWNERSHIP_SCENARIO: ${OWNERSHIP_SCENARIO:-}
+    volumes:
+      - ./checks/ownership:/checks:ro
+      - ./reports:/reports
+    command: [python, /checks/run.py]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
 volumes:
   database:
   scanner-cache:

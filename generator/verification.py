@@ -218,6 +218,14 @@ def verify(
                     execute and deployed, sudo_password,
                 )
             )
+        if os.environ.get("OWNERSHIP_SCENARIO"):
+            checks.append(
+                run_check(
+                    root, "owner-isolation",
+                    ["docker", "compose", "--profile", "checks", "run", "--rm", "ownership-acceptance"],
+                    execute and deployed, sudo_password,
+                )
+            )
     write_json(root / "reports" / "checks.json", [check.model_dump() for check in checks])
     return checks
 
