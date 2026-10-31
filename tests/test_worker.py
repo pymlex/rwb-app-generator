@@ -109,13 +109,64 @@ def test_role_rejects_invalid_tools(tmp_path, tool):
         worker.generate("developer", "Implement", "base", Result)
 
 
-def test_role_exhaustion_terminates_without_extra_model_call(tmp_path):
+@pytest.mark.parametrize("stage", ["backend-review-00", "architect", "documentation-00"])
+@pytest.mark.parametrize("max_tool_rounds", [0, 1, 2])
+def test_role_exhaustion_uses_one_schema_checked_final_call(tmp_path, stage, max_tool_rounds):
     lookup = request({"name": "search_knowledge", "query": "contract"})
-    worker = agent(tmp_path, [lookup, lookup], max_tool_rounds=1)
-    with pytest.raises(ValueError, match="exhausted 1 tool rounds"):
-        worker.generate("architect", "Design", "base", Result)
+    worker = agent(
+        tmp_path,
+        [*[lookup] * (max_tool_rounds + 1), {"content": "Final result"}],
+        max_tool_rounds=max_tool_rounds,
+    )
+    result = worker.generate(stage, "Original task", "base", Result)
+    assert result.content == "Final result"
+    assert len(worker.model.calls) == max_tool_rounds + 2
+    final = worker.model.calls[-1]
+    assert final["stage"] == f"{stage}-turn-{max_tool_rounds + 1}-final"
+    assert "No tools are available" in final["instruction"]
+    assert "Original task" in final["instruction"]
+    events = [
+        json.loads(row)
+        for row in (tmp_path / ".pipeline/events.jsonl").read_text().splitlines()
+    ]
+    assert sum(row["kind"] == "agent_tool_executed" for row in events) == max_tool_rounds
+    assert events[-2]["kind"] == "role_agent_finalization_started"
+    assert events[-1]["kind"] == "role_agent_completed"
+    assert events[-1]["finalization"] is True
+
+
+@pytest.mark.parametrize("final", [{}, {"content": "bad", "extra": True}, request({"name": "load_skill", "skill": "backend"})])
+def test_final_call_rejects_invalid_results_and_further_tool_requests(tmp_path, final):
+    lookup = request({"name": "search_knowledge", "query": "contract"})
+    worker = agent(tmp_path, [lookup, final], max_tool_rounds=0)
+    with pytest.raises(ValidationError):
+        worker.generate("backend-review-00", "Review", "base", Result)
     assert len(worker.model.calls) == 2
-    assert "must finish now" in worker.model.calls[-1]["instruction"]
+    events = [
+        json.loads(row)
+        for row in (tmp_path / ".pipeline/events.jsonl").read_text().splitlines()
+    ]
+    assert [row["kind"] for row in events] == ["role_agent_finalization_started"]
+
+
+def test_final_call_keeps_loaded_skills_latest_results_and_provenance(tmp_path):
+    (tmp_path / "contract.json").write_text("ACTUAL_CONTRACT", encoding="utf-8")
+    worker = agent(
+        tmp_path,
+        [
+            request({"name": "load_skill", "skill": "backend"}),
+            request({"name": "read_artifact", "path": "contract.json"}),
+            request({"name": "read_artifact", "path": ".env"}),
+            {"content": "Reviewed"},
+        ],
+    )
+    worker.generate("backend-review-00", "Review actual code", "BASE_CONTEXT", Result)
+    final_context = worker.model.calls[-1]["context"]
+    assert final_context.startswith("BASE_CONTEXT\nROLE TOOL CONTEXT\n")
+    supplied = json.loads(final_context.split("ROLE TOOL CONTEXT\n", 1)[1])
+    assert supplied["loaded_skills"][0]["result"]["skill"] == "backend"
+    assert supplied["latest_tool_results"][0]["result"]["text"] == "ACTUAL_CONTRACT"
+    assert len(supplied["lookup_references"]) == 2
 
 
 def test_oversized_artifact_is_not_truncated(tmp_path):
