@@ -240,6 +240,21 @@ def test_tool_budget_reserves_full_longest_prefix_output_cap(tmp_path):
     assert worker._tool_budget("backend-service-07", "instruction", "x" * 90000, schema) == 0
 
 
+def test_numbered_documentation_reserves_full_output_before_loading_artifacts(tmp_path):
+    worker = agent(tmp_path, [finish()])
+    worker.model.settings = SimpleNamespace(
+        tpm_limit=30000,
+        context_limit=32768,
+        max_output_tokens=14000,
+        token_margin=512,
+    )
+    schema = response_envelope(Result)
+    context = "x" * 60000
+    expected = worker._tool_budget("documentation-system", "Write", context, schema)
+    assert 0 < expected < worker.max_read_context_chars
+    assert worker._tool_budget("documentation-00", "Write", context, schema) == expected
+
+
 def test_missing_symbol_returns_catalogue_instead_of_unrelated_code(tmp_path):
     (tmp_path / "part.cs").write_text(CSHARP, encoding="utf-8")
     worker = RoleAgent(

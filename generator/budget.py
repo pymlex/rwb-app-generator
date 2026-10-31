@@ -22,6 +22,7 @@ STAGE_OUTPUT_CAPS = {
     "frontend-logic": 8000,
     "frontend-view": 9000,
     "tests": 6000,
+    "documentation": 12000,
     "documentation-system": 12000,
     "documentation-handover": 8000,
 }
