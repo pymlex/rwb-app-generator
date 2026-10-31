@@ -60,20 +60,32 @@ services:
       retries: 30
     mem_limit: 96m
   lock:
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
     image: node:22-bookworm-slim
     profiles: [checks]
     working_dir: /app
     volumes:
       - ./frontend:/app
+    environment:
+      NPM_CONFIG_CACHE: /tmp/npm
     command: [npm, install, --package-lock-only, --ignore-scripts, --no-audit, --no-fund]
     mem_limit: 512m
   backend-lock:
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
     image: mcr.microsoft.com/dotnet/sdk:10.0
     profiles: [checks]
     working_dir: /app
     volumes:
       - ./backend:/app
       - nuget-cache:/root/.nuget/packages
+    environment:
+      DOTNET_CLI_HOME: /tmp/dotnet
     command: [dotnet, restore, App.csproj, --use-lock-file]
     mem_limit: 512m
   unit:
@@ -100,10 +112,18 @@ services:
     security_opt: [no-new-privileges:true]
     mem_limit: 128m
   audit:
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
     image: aquasec/trivy:0.67.2
     profiles: [checks]
     volumes:
-      - .:/src:ro
+      - ./backend:/src/backend:ro
+      - ./backend-unit:/src/backend-unit:ro
+      - ./frontend:/src/frontend:ro
+      - ./tests:/src/tests:ro
+      - ./scripts:/src/scripts:ro
       - ./reports:/reports
       - scanner-cache:/root/.cache
     command: [fs, --scanners, 'vuln,secret', --skip-files, /src/.env, --skip-dirs, '/src/.pipeline,/src/frontend/node_modules', --severity, 'HIGH,CRITICAL', --exit-code, '1', --format, json, --output, /reports/security.json, /src]
