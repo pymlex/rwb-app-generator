@@ -38,7 +38,7 @@ public static class DomainEvents
         var eventId = Guid.NewGuid();
         var occurredAt = DateTimeOffset.UtcNow;
         var payload = DomainJson.Write(new { eventId, version = 1, type = eventType, occurredAt, aggregateId, actor = actor.Subject, data });
-        await using var command = new NpgsqlCommand("INSERT INTO audit_events(event_id,aggregate_id,event_type,actor_id,payload,occurred_at) VALUES($1,$2,$3,$4,$5,$6); INSERT INTO outbox(aggregate_id,event_type,payload) VALUES($2,$3,$5)", connection, transaction);
+        await using var command = new NpgsqlCommand("WITH recorded AS (INSERT INTO audit_events(event_id,aggregate_id,event_type,actor_id,payload,occurred_at) VALUES($1,$2,$3,$4,$5,$6) RETURNING aggregate_id,event_type,payload) INSERT INTO outbox(aggregate_id,event_type,payload) SELECT aggregate_id,event_type,payload FROM recorded", connection, transaction);
         command.Parameters.AddWithValue(eventId);
         command.Parameters.AddWithValue(aggregateId);
         command.Parameters.AddWithValue(eventType);
