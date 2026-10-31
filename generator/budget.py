@@ -36,6 +36,35 @@ class Budget:
     counter_source: str
 
 
+def admission_delay(
+    events: list[dict],
+    reservation: int,
+    limit: int,
+    quota_identity: str,
+    now: datetime,
+) -> float:
+    if reservation > limit:
+        raise ValueError("Request reservation exceeds the complete token window")
+    recent = []
+    for item in events:
+        if item.get("kind") != "model_completed" or item.get("quota_identity") != quota_identity:
+            continue
+        usage = item.get("usage")
+        timestamp = item.get("time")
+        if not isinstance(usage, dict) or not isinstance(timestamp, str):
+            continue
+        tokens = usage.get("total_tokens")
+        if type(tokens) is not int or tokens <= 0:
+            continue
+        completed = datetime.fromisoformat(timestamp)
+        age = (now - completed).total_seconds()
+        if 0 <= age < 61:
+            recent.append((tokens, 61 - age))
+    if reservation + sum(tokens for tokens, _ in recent) <= limit:
+        return 0.0
+    return min(delay for _, delay in recent)
+
+
 def plan_budget(
     client: httpx.Client,
     settings: Settings,

@@ -23,7 +23,7 @@ py-modules = ["main"]
 include = ["generator*"]
 
 [tool.setuptools.package-data]
-generator = ["templates/**/*", "prompts/*.md"]
+generator = ["templates/**/*", "templates/.*", "templates/**/.*", "prompts/*.md", "skills/*.md"]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

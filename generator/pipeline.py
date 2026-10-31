@@ -16,8 +16,10 @@ from generator.models import (
     Blueprint,
     ImplementationPlan,
     RequirementReviews,
+    WorkPackage,
 )
 from generator.reference_data import profile_data, validate_contract
+from generator.resume import recover_service_packages
 from generator.storage import digest, event, save_batch, source_span, write_json
 from generator.verification import backend_build, report, verify
 from generator.worker import RoleAgent
@@ -56,7 +58,9 @@ def validate_plan(
     plan: ImplementationPlan, methods: set[str], requirements: set[str], endpoints: set[str]
 ):
     assigned = [method for package in plan.packages for method in package.methods]
-    if sorted(assigned) != sorted(methods) or plan.packages[0].methods != ["Initialise"]:
+    if sorted(assigned) != sorted(methods) or (
+        "Initialise" in methods and plan.packages[0].methods != ["Initialise"]
+    ):
         raise ValueError("Implementation plan must assign every method once and Initialise first")
     for package in plan.packages:
         if (
@@ -64,6 +68,14 @@ def validate_plan(
             or not set(package.endpoint_paths) <= endpoints
         ):
             raise ValueError("Work plan references unknown requirements or API paths")
+
+
+def canonicalise_plan_paths(plan: ImplementationPlan, blueprint: Blueprint):
+    references = {f"{item.method} {item.path}": item.path for item in blueprint.endpoints}
+    for package in plan.packages:
+        package.endpoint_paths = list(
+            dict.fromkeys(references.get(value, value) for value in package.endpoint_paths)
+        )
 
 
 class Pipeline:
@@ -94,7 +106,7 @@ class Pipeline:
             {role: paths},
             max_context_chars=65000,
             max_knowledge_chars=8000,
-            chunk_limit=2,
+            chunk_limit=2 if role in {"analyst", "architect", "documenter"} else 1,
         )
         loaded = loader.load(role, json.dumps(task, ensure_ascii=False), paths)
         domain = {}
@@ -230,7 +242,15 @@ class Pipeline:
         context = self.context(
             "architect", {"task": "Design all workflows and exact typed API contracts"}, []
         )
-        self.blueprint = self.ask("architecture", self.prompt("architecture"), context, Blueprint)
+        if self.reuse_contracts:
+            self.blueprint = Blueprint.model_validate_json(
+                (self.output / "docs/blueprint.json").read_text(encoding="utf-8")
+            )
+            event(self.run_dir, "artifact_reused", stage="architecture", path="docs/blueprint.json")
+        else:
+            self.blueprint = self.ask(
+                "architecture", self.prompt("architecture"), context, Blueprint
+            )
         known = {item.id for item in self.analysis.requirements}
         for endpoint in self.blueprint.endpoints:
             if not set(endpoint.requirement_ids) <= known:
@@ -240,6 +260,16 @@ class Pipeline:
 
     def backend_models(self, state: AgentState) -> AgentState:
         paths = BACKEND_CONTRACT
+        if self.reuse_contracts:
+            defects = validate_contract(
+                self.reference_data,
+                (self.output / paths[0]).read_text(encoding="utf-8"),
+                (self.output / paths[1]).read_text(encoding="utf-8"),
+            )
+            if not defects:
+                event(self.run_dir, "artifact_reused", stage="backend_models", paths=paths)
+                return AgentState(artifacts={"backend_contract": paths})
+            self.reuse_contracts = False
         defects = []
         for attempt in range(self.settings.max_repairs + 1):
             dependencies = ["backend/DomainSupport.cs", "backend/migrations/001_initial.sql"]
@@ -279,20 +309,45 @@ class Pipeline:
             raise ValueError(
                 "Service operation names must be unique for deterministic work delegation"
             )
-        planning = self.context(
-            "architect",
-            {"blueprint": self.blueprint.model_dump(), "available_methods": list(by_name)},
-            BACKEND_CONTRACT,
-        )
-        plan = self.ask(
-            "backend-plan", self.prompt("implementation-plan"), planning, ImplementationPlan
-        )
-        validate_plan(
-            plan,
-            set(by_name),
-            {item.id for item in self.analysis.requirements},
-            {item.path for item in self.blueprint.endpoints},
-        )
+        recovered = recover_service_packages(self.output, source) if self.reuse_contracts else []
+        if recovered and "Initialise" not in recovered[0]["methods"]:
+            recovered = []
+        already = {name for record in recovered for name in record["methods"]}
+        remaining = set(by_name) - already
+        pending = []
+        if remaining:
+            planning = self.context(
+                "architect",
+                {
+                    "blueprint": self.blueprint.model_dump(),
+                    "available_methods": sorted(remaining),
+                    "completed_methods": sorted(already),
+                },
+                BACKEND_CONTRACT,
+            )
+            instruction = (
+                self.prompt("implementation-plan")
+                + "\nRESUME: Return packages only for available_methods. Completed methods are immutable existing work and must not be reassigned. Put Initialise first only if it appears in available_methods."
+            )
+            planned = self.ask("backend-plan", instruction, planning, ImplementationPlan)
+            canonicalise_plan_paths(planned, self.blueprint)
+            validate_plan(
+                planned,
+                remaining,
+                {item.id for item in self.analysis.requirements},
+                {item.path for item in self.blueprint.endpoints},
+            )
+            pending = planned.packages
+        frozen = [
+            WorkPackage(
+                methods=record["methods"],
+                requirement_ids=record["requirement_ids"],
+                endpoint_paths=[item.path for item in self.blueprint.endpoints],
+                purpose="Resume checkpoint-backed implementation; compilation and review remain mandatory",
+            )
+            for record in recovered
+        ]
+        plan = ImplementationPlan(packages=[*frozen, *pending])
         write_json(self.run_dir / "implementation-plan.json", plan.model_dump())
         self.service_paths = []
         self.work_packages = {}
@@ -360,7 +415,25 @@ class Pipeline:
                 sha256=digest((self.output / path).read_text(encoding="utf-8")),
             )
 
-        for index, package in enumerate(plan.packages):
+        for record, package in zip(recovered, frozen, strict=True):
+            self.service_paths.append(record["path"])
+            self.work_packages[record["path"]] = package.model_dump()
+            event(
+                self.run_dir,
+                "artifact_reused",
+                stage="backend_service",
+                path=record["path"],
+                sha256=record["sha256"],
+                methods=record["methods"],
+            )
+        next_index = (
+            max(
+                [int(re.search(r"Part(\d+)", record["path"]).group(1)) for record in recovered],
+                default=-1,
+            )
+            + 1
+        )
+        for index, package in enumerate(pending, next_index):
             implement(f"{index:02}", [by_name[name] for name in package.methods], package)
         for obsolete in (self.output / "backend").glob("DomainService.Part*.cs"):
             relative = obsolete.relative_to(self.output).as_posix()
@@ -580,6 +653,7 @@ class Pipeline:
                 self.prompt("assertion-review"),
                 context,
                 RequirementReviews,
+                WorkPackage,
             )
             if {item.requirement_id for item in result.requirements} != {
                 item.id for item in subset
@@ -679,8 +753,24 @@ class Pipeline:
         shutil.copytree(ROOT / "templates", self.output, dirs_exist_ok=True)
         shutil.copyfile(ROOT.parent / "LICENSE", self.output / "LICENSE")
         (self.output / "requirements.md").write_text(requirements, encoding="utf-8")
+        profile_path = self.run_dir / "reference-data.json"
+        previous_profile = (
+            json.loads(profile_path.read_text(encoding="utf-8")) if profile_path.exists() else None
+        )
+        answers_path = self.output / "docs/clarification-answers.json"
+        previous_answers = (
+            json.loads(answers_path.read_text(encoding="utf-8")) if answers_path.exists() else None
+        )
         self.reference_data = profile_data(self.output / "backend/data")
-        write_json(self.run_dir / "reference-data.json", self.reference_data)
+        self.reuse_contracts = (
+            previous_profile == self.reference_data
+            and previous_answers == (json.loads(answers) if answers else {})
+            and all(
+                (self.output / path).is_file()
+                for path in ["docs/blueprint.json", *BACKEND_CONTRACT]
+            )
+        )
+        write_json(profile_path, self.reference_data)
         manifest = self.run_dir / "artifact-manifest.json"
         if manifest.exists():
             self.generated = {

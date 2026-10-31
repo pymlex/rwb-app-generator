@@ -23,13 +23,10 @@ Use record 'with' expressions instead of assigning init-only DTO properties.
 Initialise must be repeatable with no duplicate entities, drivers, zones or sessions after restart.
 Use deterministic fixture IDs and ON CONFLICT updates. Seed a driver owning records with subject
 "driver". Any synthetic fixtures must be explicitly marked synthetic and used only for demo.
-For geospatial cases load data/parking-zones.json when present with schema:
-{result:"Success",data:{city:"spb",zones:[{externalZoneId,displayName,geometry:WKT,price:minor units,
-priceDescription,minTime,timeStep,entityState}]}}. Preserve all source fields and stable provider IDs.
-Import WKT using ST_GeomFromText with SRID 4326. Compare Active case-insensitively. Return geometries
-to the UI. Match lines with configurable distance in METRES and label the result approximate.
-Do not silently substitute fabricated polygons for the provided real street segments.
-Use DomainEvents for zone entry, exit, transition, session warning and expiry as relevant.
+The supplied reference_data profile identifies actual source files and exact collection schemas.
+For source import or geospatial operations, load the geospatial skill and use those facts.
+Preserve source identifiers and original fields. Do not invent a replacement source schema.
+Use DomainEvents for actual state transitions, notifications and expiry as required.
 Time-based warnings must be computed by a real background service or deterministically evaluated
 on polling, without duplicates. Implement demo clock advance and reset if the interface includes them.
 If a background worker is required, define DomainWorker in this file, inject IDomainService,

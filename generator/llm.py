@@ -2,11 +2,12 @@ import json
 import re
 import time
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
 
-from generator.budget import plan_budget, retry_delay
+from generator.budget import admission_delay, plan_budget, retry_delay
 from generator.config import Settings
 from generator.storage import digest, event, write_json
 
@@ -37,6 +38,36 @@ class Qwen:
         self.settings = settings
         self.run = run
 
+    def _admit(self, stage: str, budget):
+        quota_identity = digest(self.settings.base_url + "|" + self.settings.api_key)
+        path = self.run / "events.jsonl"
+        while True:
+            events = (
+                [json.loads(row) for row in path.read_text(encoding="utf-8").splitlines() if row]
+                if path.exists()
+                else []
+            )
+            delay = admission_delay(
+                events,
+                budget.reservation,
+                self.settings.tpm_limit,
+                quota_identity,
+                datetime.now(UTC),
+            )
+            if delay <= 0:
+                return
+            pause = min(60, delay)
+            event(
+                self.run,
+                "admission_window_wait",
+                stage=stage,
+                seconds=pause,
+                reservation=budget.reservation,
+                quota_identity=quota_identity,
+                accounting="conservative_local_completion_window_61s",
+            )
+            time.sleep(pause)
+
     def generate(self, stage: str, instruction: str, context: str, schema):
         prompt = (
             instruction
@@ -60,6 +91,7 @@ class Qwen:
             budget = plan_budget(client, self.settings, stage, messages)
             event(self.run, "token_budget", stage=stage, **asdict(budget))
             for attempt in range(3):
+                self._admit(stage, budget)
                 event(
                     self.run,
                     "model_http_attempt",
@@ -105,6 +137,7 @@ class Qwen:
             duration_seconds=round(time.monotonic() - started, 3),
             usage=data.get("usage", {}),
             finish_reason=choice.get("finish_reason"),
+            quota_identity=digest(self.settings.base_url + "|" + self.settings.api_key),
         )
         if choice.get("finish_reason") == "length":
             raise OutputLimitExceeded(f"Stage {stage} exceeded output token budget")
