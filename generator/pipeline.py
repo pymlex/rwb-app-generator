@@ -687,14 +687,40 @@ class Pipeline:
             "docs/limitations.md",
             "README.md",
         ]
+        evidence = []
+        for name in dict.fromkeys(
+            [
+                "backend/DomainModels.cs",
+                "backend/Domain.cs",
+                *self.service_paths,
+                *FRONTEND,
+                *self.test_paths,
+            ]
+        ):
+            artifact = self.output / name
+            if artifact.is_file():
+                source = artifact.read_text(encoding="utf-8")
+                evidence.append({"path": name, "sha256": digest(source), "chars": len(source)})
         for index, path in enumerate(paths):
             context = self.context(
                 "documenter",
                 {
-                    "task": f"Document {path} using the relevant corporate template. Mark unverified implementation claims explicitly.",
+                    "task": (
+                        f"Document {path} using the relevant corporate template. "
+                        "The blueprint describes the design, not proof of implementation. "
+                        "The supplied DomainModels.cs is the actual typed contract. "
+                        "Use read_artifact to inspect relevant actual routes, UI or service members "
+                        "from implementation_evidence before claiming implemented behavior. "
+                        "Load only the evidence needed for this document, use C# symbol reads for "
+                        "service members, and mark unverified implementation claims explicitly."
+                    ),
                     "blueprint": self.blueprint.model_dump(),
+                    "implementation_evidence": evidence,
+                    "executed_checks": [
+                        {"name": check.name, "status": check.status} for check in self.checks
+                    ],
                 },
-                ["backend/DomainModels.cs", "backend/Domain.cs", "frontend/src/app.ts"],
+                ["backend/DomainModels.cs"],
             )
             self.generate_files(
                 f"documentation-{index:02}",
