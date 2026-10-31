@@ -1,0 +1,16 @@
+{"time":"2026-10-31T06:00:00+00:00","kind":"run_started","input_sha256":"fixture-input"}
+{"time":"2026-10-31T06:00:01+00:00","kind":"model_started","stage":"analysis","http_tracking":true}
+{"time":"2026-10-31T06:00:02+00:00","kind":"model_http_attempt","stage":"analysis","attempt":1}
+{"time":"2026-10-31T06:00:03+00:00","kind":"model_http_failure","stage":"analysis","status":429,"detail":"DO-NOT-COPY-ERROR"}
+{"time":"2026-10-31T06:00:03+00:00","kind":"rate_window_wait","stage":"analysis","seconds":2}
+{"time":"2026-10-31T06:00:05+00:00","kind":"model_http_attempt","stage":"analysis","attempt":2}
+{"time":"2026-10-31T06:00:07+00:00","kind":"model_completed","stage":"analysis","duration_seconds":6,"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30,"completion_tokens_details":{"reasoning_tokens":5}}}
+{"time":"2026-10-31T06:00:08+00:00","kind":"repair_started","stage":"backend","attempt":1}
+{"time":"2026-10-31T06:00:08+00:00","kind":"model_started","stage":"backend","http_tracking":true}
+{"time":"2026-10-31T06:00:08+00:00","kind":"model_http_attempt","stage":"backend","attempt":1}
+{"time":"2026-10-31T06:00:10+00:00","kind":"model_completed","stage":"backend","duration_seconds":2,"usage":{"prompt_tokens":30,"completion_tokens":40,"total_tokens":70}}
+{"time":"2026-10-31T06:00:11+00:00","kind":"run_completed","status":"failed","duration_seconds":11}
+{"time":"2026-10-31T06:01:00+00:00","kind":"run_started","input_sha256":"fixture-input"}
+{"time":"2026-10-31T06:01:01+00:00","kind":"cache_hit","stage":"analysis","fingerprint":"fixture-cache"}
+{"time":"2026-10-31T06:01:01+00:00","kind":"analysis_reused","path":"docs/analysis.json"}
+{"time":"2026-10-31T06:01:02+00:00","kind":"artifact_reused","stage":"backend","paths":["backend/Domain.cs"]}

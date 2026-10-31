@@ -9,6 +9,7 @@ from pathlib import Path
 from generator.agents import AgentState, RoleGraph, SkillLoader
 from generator.config import Settings
 from generator.llm import OutputLimitExceeded, Qwen
+from generator.metrics import write_metrics
 from generator.models import (
     Analysis,
     ArtifactBatch,
@@ -21,7 +22,7 @@ from generator.models import (
 from generator.reference_data import profile_data, validate_contract
 from generator.resume import recover_service_packages
 from generator.source_edits import SourceEdits, prepare_source_edits
-from generator.storage import digest, event, save_batch, source_span, write_json
+from generator.storage import artifact_path, digest, event, save_batch, source_span, write_json
 from generator.verification import backend_build, report, verify
 from generator.worker import RoleAgent
 
@@ -40,6 +41,41 @@ FRONTEND = [
     "frontend/src/app.html",
     "frontend/src/app.css",
 ]
+
+
+MAX_DATA_FILE_BYTES = 50 * 1024 * 1024
+MAX_DATA_TOTAL_BYTES = 100 * 1024 * 1024
+
+
+def copy_data(source: Path, output: Path):
+    if not source.is_dir():
+        raise ValueError("Data input must be a directory")
+    validated = []
+    total = 0
+    for path in sorted(source.glob("*.json")):
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("Data JSON inputs must be regular files, without symlinks")
+        size = path.stat().st_size
+        if size > MAX_DATA_FILE_BYTES:
+            raise ValueError("Data JSON file exceeds 50 MiB")
+        if total + size > MAX_DATA_TOTAL_BYTES:
+            raise ValueError("Data JSON files exceed 100 MiB in total")
+        with path.open("rb") as stream:
+            raw = stream.read(MAX_DATA_FILE_BYTES + 1)
+        if len(raw) > MAX_DATA_FILE_BYTES:
+            raise ValueError("Data JSON file exceeds 50 MiB")
+        total += len(raw)
+        if total > MAX_DATA_TOTAL_BYTES:
+            raise ValueError("Data JSON files exceed 100 MiB in total")
+        try:
+            json.loads(raw.decode("utf-8-sig"))
+        except (ValueError, RecursionError):
+            raise ValueError("Data file must contain valid UTF-8 JSON") from None
+        target = artifact_path(output, f"backend/data/{path.name}")
+        validated.append((target, raw))
+    for target, raw in validated:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(raw)
 
 
 def service_groups(source: str) -> list[list[str]]:
@@ -470,6 +506,30 @@ class Pipeline:
             feedback=[] if passed else [check.model_dump()],
         )
 
+    def ask_scoped_review(self, stage, prompt, context, schema, paths, citations):
+        results = []
+        for attempt in range(2):
+            result = self.ask(
+                stage if attempt == 0 else stage + "-scope-retry",
+                prompt if attempt == 0 else prompt + "\nALLOWED REVIEW FILES: "
+                + json.dumps(paths) + ". Cite only these exact paths. Do not cite other files.",
+                context,
+                schema,
+            )
+            results.append(result)
+            outside = [item for item in citations(result) if item.path not in paths]
+            if not outside:
+                break
+            event(
+                self.run_dir,
+                "review_scope_retry" if attempt == 0 else "review_out_of_context_ignored",
+                stage=stage,
+                allowed_paths=paths,
+                outside_paths=sorted({item.path for item in outside}),
+                count=len(outside),
+            )
+        return results
+
     def backend_review(self, state: AgentState) -> AgentState:
         issues = []
         groups = [
@@ -503,23 +563,25 @@ class Pipeline:
                 paths,
                 requirements,
             )
-            reviewed = self.ask(
-                f"backend-review-{index:02}", self.prompt("backend-review"), context, BackendReview
+            reviewed_results = self.ask_scoped_review(
+                f"backend-review-{index:02}", self.prompt("backend-review"), context,
+                BackendReview, paths, lambda result: result.issues,
             )
-            serious_found = any(issue.severity in {"critical", "high"} for issue in reviewed.issues)
-            if reviewed.passes_static_review == serious_found:
-                raise ValueError("Reviewer verdict contradicts its defect severities")
-            for issue in reviewed.issues:
-                if not set(issue.requirement_ids) <= {
-                    item.id for item in self.analysis.requirements
-                }:
-                    raise ValueError("Reviewer cited an unknown requirement")
-                if issue.path not in paths:
-                    raise ValueError("Reviewer cited a file outside its supplied context")
-                issue.source_quote = source_span(
-                    (self.output / issue.path).read_text(encoding="utf-8"), issue.source_quote
-                )
-                issues.append(issue.model_dump())
+            for reviewed in reviewed_results:
+                scoped = [issue for issue in reviewed.issues if issue.path in paths]
+                serious_found = any(issue.severity in {"critical", "high"} for issue in scoped)
+                if len(scoped) == len(reviewed.issues) and reviewed.passes_static_review == serious_found:
+                    raise ValueError("Reviewer verdict contradicts its defect severities")
+                for issue in scoped:
+                    if not set(issue.requirement_ids) <= {
+                        item.id for item in self.analysis.requirements
+                    }:
+                        raise ValueError("Reviewer cited an unknown requirement")
+                    issue.source_quote = source_span(
+                        (self.output / issue.path).read_text(encoding="utf-8"), issue.source_quote
+                    )
+                    if issue.model_dump() not in issues:
+                        issues.append(issue.model_dump())
         write_json(self.output / "reports/backend-review.json", issues)
         serious = [issue for issue in issues if issue["severity"] in {"critical", "high"}]
         return AgentState(review_passed=not serious, repairable=True, feedback=serious)
@@ -742,33 +804,51 @@ class Pipeline:
                 [path, "backend/DomainModels.cs", "backend/Domain.cs"],
                 subset,
             )
-            result = self.ask(
+            results = self.ask_scoped_review(
                 f"assertion-review-{index:02}",
                 self.prompt("assertion-review"),
                 context,
                 RequirementReviews,
+                [path],
+                lambda result: [proof for item in result.requirements for proof in item.evidence],
             )
-            if {item.requirement_id for item in result.requirements} != {
-                item.id for item in subset
-            }:
-                raise ValueError("Assertion reviewer must return exactly the assigned requirements")
             source = (self.output / path).read_text(encoding="utf-8")
-            for reviewed in result.requirements:
-                if reviewed.status == "passed" and (
-                    reviewed.missing_criteria or not reviewed.evidence
-                ):
-                    raise ValueError("Passed assertion review needs complete concrete evidence")
-                for proof in reviewed.evidence:
-                    if proof.path != path or not proof.test_name.startswith(
-                        "test_" + reviewed.requirement_id.replace("-", "_") + "_"
+            merged = {}
+            for attempt, result in enumerate(results):
+                if {item.requirement_id for item in result.requirements} != {
+                    item.id for item in subset
+                }:
+                    raise ValueError("Assertion reviewer must return exactly the assigned requirements")
+                for reviewed in result.requirements:
+                    if reviewed.status == "passed" and (
+                        reviewed.missing_criteria or not reviewed.evidence
                     ):
-                        raise ValueError(
-                            "Assertion evidence must identify an assigned test and requirement"
+                        raise ValueError("Passed assertion review needs complete concrete evidence")
+                    outside = [proof for proof in reviewed.evidence if proof.path != path]
+                    reviewed.evidence = [proof for proof in reviewed.evidence if proof.path == path]
+                    if outside and attempt == len(results) - 1:
+                        reviewed.status = "failed"
+                        reviewed.missing_criteria.extend(
+                            f"Out-of-context evidence discarded: {proof.criterion}" for proof in outside
                         )
-                    proof.source_quote = source_span(source, proof.source_quote)
-                    if not re.search(r"def\s+" + re.escape(proof.test_name) + r"\s*\(", source):
-                        raise ValueError("Assertion reviewer cited a nonexistent test")
-                reviews.append(reviewed.model_dump())
+                    for proof in reviewed.evidence:
+                        if not proof.test_name.startswith(
+                            "test_" + reviewed.requirement_id.replace("-", "_") + "_"
+                        ):
+                            raise ValueError(
+                                "Assertion evidence must identify an assigned test and requirement"
+                            )
+                        proof.source_quote = source_span(source, proof.source_quote)
+                        if not re.search(r"def\s+" + re.escape(proof.test_name) + r"\s*\(", source):
+                            raise ValueError("Assertion reviewer cited a nonexistent test")
+                    previous = merged.get(reviewed.requirement_id)
+                    if previous:
+                        reviewed.evidence = list({proof.model_dump_json(): proof for proof in [*previous.evidence, *reviewed.evidence]}.values())
+                        reviewed.missing_criteria = list(dict.fromkeys([*previous.missing_criteria, *reviewed.missing_criteria]))
+                        if previous.status == "failed":
+                            reviewed.status = "failed"
+                    merged[reviewed.requirement_id] = reviewed
+            reviews.extend(item.model_dump() for item in merged.values())
         write_json(self.output / "reports/requirement-review.json", reviews)
 
     def documenter(self, state: AgentState) -> AgentState:
@@ -856,17 +936,20 @@ class Pipeline:
         execute: bool = False,
         deploy: bool = False,
         sudo_password: str | None = None,
+        data: Path | None = None,
     ):
         started = time.monotonic()
         self.requirements, self.answers = requirements, answers
         self.execute, self.deploy, self.sudo_password = execute, deploy, sudo_password
-        self.run_dir.mkdir(parents=True, exist_ok=True)
         identity = digest(requirements)
         identity_file = self.run_dir / "input.sha256"
         if identity_file.exists() and identity_file.read_text() != identity:
             raise ValueError(
                 "Output directory belongs to different requirements. Use a new output directory."
             )
+        if data is not None:
+            copy_data(data, self.output)
+        self.run_dir.mkdir(parents=True, exist_ok=True)
         identity_file.write_text(identity)
         event(self.run_dir, "run_started", input_sha256=identity)
         shutil.copytree(ROOT / "templates", self.output, dirs_exist_ok=True)
@@ -903,6 +986,7 @@ class Pipeline:
         )
         state = graph.invoke(AgentState())
         write_json(self.run_dir / "graph-state.json", state)
+        write_metrics(self.output, self.checks, state["status"], time.monotonic() - started)
         if state["status"] == "needs_clarification":
             return {
                 "status": "needs_clarification",
@@ -919,4 +1003,5 @@ class Pipeline:
             }
         result = report(self.output, self.analysis, self.checks, time.monotonic() - started)
         event(self.run_dir, "run_completed", **result)
+        write_metrics(self.output, self.checks, result["status"], time.monotonic() - started)
         return result

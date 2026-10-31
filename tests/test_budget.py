@@ -26,6 +26,31 @@ def test_original_frontend_size_gets_an_admissible_stage_cap():
     assert budget.context_estimate + 512 <= 32768
 
 
+@pytest.mark.parametrize("index", range(7))
+@pytest.mark.parametrize(
+    "limits,tokenizer_input,expected",
+    [
+        ({}, 1000, 12000),
+        ({"max_output_tokens": 7000}, 1000, 7000),
+        ({"context_limit": 12000}, 1000, 10488),
+        ({"tpm_limit": 10000}, 1000, 9487),
+    ],
+)
+def test_numbered_documentation_stages_get_full_cap_within_all_limits(
+    index, limits, tokenizer_input, expected
+):
+    settings = Settings("http://model/v1", "test-key", **limits)
+    with httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"total_tokens": tokenizer_input})
+        )
+    ) as client:
+        budget = plan_budget(client, settings, f"documentation-{index:02}-turn-0", [])
+    assert budget.output_cap == expected
+    assert budget.reservation + settings.token_margin <= settings.tpm_limit
+    assert budget.context_estimate + settings.token_margin <= settings.context_limit
+
+
 def test_request_too_large_for_a_complete_artifact_is_rejected_before_generation():
     calls = []
 

@@ -4,6 +4,56 @@ Team TLE builds a requirements-driven application generator for the RWB hackatho
 
 The generated stack is Angular 20.1.6 with Angular Material and PWA support, ASP.NET Core on .NET 10, PostgreSQL with PostGIS, Kafka and Docker Compose. Python and LangGraph coordinate specialist role agents. Corporate documentation is indexed locally with SQLite FTS5 and retrieved with source hashes.
 
+## Быстрый старт
+
+Критерии оценки, места доказательств и команды проверки собраны в [руководстве для жюри](docs/evaluation-guide.md). Меры безопасности пайплайна и приложения описаны в [docs/security.md](docs/security.md). Полный прогон на VM ещё не выполнен, поэтому результаты генерации, сборки и приёмочных тестов здесь не приводятся (см. «Current constraints» ниже).
+
+**Mac: проверка кода пайплайна.** Нужен Python 3.12 или новее. Docker и API Qwen не требуются. Команды выполняются в корне репозитория.
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.lock
+python -m pip install -e ".[dev]"
+python -m ruff check generator tests main.py
+python -m pytest -q
+python main.py index knowledge/sources
+```
+
+На ревизии, по которой написан раздел, `ruff` не находит замечаний, `pytest` сообщает `126 passed`, а `index` печатает `{"indexed_chunks": 22}`. Индекс сохраняется в `knowledge/index.sqlite`, этот файл исключён из Git.
+
+**VM: генерация, сборка и запуск.** Нужны Python 3.12 или новее, Docker Compose и доступ VM к API организаторов. Адрес API указан в `.env.example`, ключ вводится без отображения, генератор читает его только из переменной окружения.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.lock
+python -m pip install -e ".[dev]"
+export QWEN_BASE_URL=<значение QWEN_BASE_URL из .env.example>
+read -rs -p 'Qwen API key: ' QWEN_API_KEY
+export QWEN_API_KEY
+python main.py index knowledge/sources
+```
+
+Файлы данных кейса 1 (`spb.json`, `response.json`), если они у вас есть, кладутся до генерации в `runs/parking/backend/data/`: пока отдельного ключа командной строки нет, генератор читает их только оттуда.
+
+```bash
+mkdir -p runs/parking/backend/data
+python main.py generate examples/parking.md --answers examples/parking-answers.json --output runs/parking
+python runs/parking/scripts/configure.py
+python main.py verify runs/parking --execute --deploy --sudo
+```
+
+Скрипт `configure.py` создаёт `.env` со случайными паролем базы и токенами и завершается ошибкой, если `.env` уже существует. Ключ `--sudo` нужен, пока у пользователя нет доступа к Docker через группу `docker`. Второй домен: `python main.py generate examples/inventory.md --output runs/inventory`.
+
+Приложение слушает порт 8080 на VM. С Mac его открывают через туннель:
+
+```bash
+ssh -N -L 8080:localhost:8080 <имя VM из ~/.ssh/config>
+```
+
+Затем откройте `http://localhost:8080`. Токены `ADMIN_TOKEN` и `DRIVER_TOKEN` лежат в `runs/parking/.env`; не публикуйте их в чатах и отчётах. Результаты проверок — в `runs/parking/reports/`, журнал вызовов модели — в `runs/parking/.pipeline/events.jsonl`. Свидетельства конкретного прогона для жюри оформляются в `docs/evidence/<run-id>/README.md`.
+
 ## Architecture
 
 The generator runs on the organiser VM. Every application generation request uses the organiser API and the fixed `qwen3.8-27b` model.
@@ -62,6 +112,17 @@ export QWEN_API_KEY
 python main.py index knowledge/sources
 python main.py generate examples/parking.md --answers examples/parking-answers.json --output runs/parking
 ```
+
+To supply reference data, place `spb.json` and `response.json` in a local folder and run:
+
+```bash
+python main.py generate examples/parking.md --answers examples/parking-answers.json --data /path/to/reference-data --output runs/parking
+```
+
+Only top-level `*.json` files are copied to `backend/data` inside the output. Each must
+be valid UTF-8 JSON, at most 50 MiB, with at most 100 MiB combined. All selected files
+are validated before copying or model calls. Symlinks are rejected. Reference files
+are untrusted data; their contents do not authorise commands or network requests.
 
 Source PDF files, the chat export and real credentials are excluded from Git. Derived regulations and structured requirements may be versioned. Keep private deployment configuration on the VM.
 

@@ -16,11 +16,22 @@ public interface IDomainService
 """
 
 
-def checkpointed_part(root, number, methods, *, envelope=True, suffix="", requirement_ids=None):
+def checkpointed_part(
+    root, number, methods, *, envelope=True, suffix="", requirement_ids=None, signatures=None
+):
     path = f"backend/DomainService.Part{number:02}{suffix}.cs"
     declarations = []
+    signatures = signatures or {
+        "Initialise": "Task Initialise()",
+        "Create": "Task<OperationResult<string>> Create(Actor actor, CreateRequest request)",
+        "List": "Task<OperationResult<List<string>>> List(Actor actor)",
+    }
     for name in methods:
-        declarations.append(f"    public async Task {name}() {{ await Task.CompletedTask; }}")
+        signature = signatures.get(name, f"Task {name}()")
+        returned = " return default!;" if signature.startswith("Task<") else ""
+        declarations.append(
+            f"    public async {signature} {{ await Task.CompletedTask;{returned} }}"
+        )
     source = (
         "public partial class DomainService\n{\n"
         + "\n".join(declarations)
@@ -82,6 +93,43 @@ def test_duplicate_public_methods_in_different_provenance_valid_parts_are_reject
     checkpointed_part(tmp_path, 2, ["Create"])
     with pytest.raises(ValueError, match="duplicated"):
         recover_service_packages(tmp_path, CONTRACT)
+
+
+@pytest.mark.parametrize(
+    "old_signature",
+    [
+        "Task<OperationResult<SeedResponse>> Seed(Actor actor, string? idempotencyKey)",
+        "Task<OperationResult<SeedResponse>> Seed(Actor actor, SeedRequest request, Guid idempotencyKey)",
+        "Task<OperationResult<OldSeedResponse>> Seed(Actor actor, SeedRequest request, string? idempotencyKey)",
+    ],
+)
+@pytest.mark.parametrize("current_number,stale_number", [(1, 7), (7, 1)])
+def test_stale_seed_signature_is_excluded_before_duplicate_check(
+    tmp_path, old_signature, current_number, stale_number
+):
+    current = "Task<OperationResult<SeedResponse>> Seed(Actor actor, SeedRequest request, string? idempotencyKey)"
+    contract = "public interface IDomainService\n{\n    " + current + ";\n}"
+    stale, _ = checkpointed_part(
+        tmp_path, stale_number, ["Seed"], signatures={"Seed": old_signature}
+    )
+    checkpointed_part(tmp_path, current_number, ["Seed"], signatures={"Seed": current})
+    recovered = recover_service_packages(tmp_path, contract)
+    assert [record["path"] for record in recovered] == [
+        f"backend/DomainService.Part{current_number:02}.cs"
+    ]
+    assert recovered[0]["methods"] == ["Seed"]
+    assert stale.exists()
+
+
+def test_current_signature_with_different_whitespace_is_recovered(tmp_path):
+    checkpointed_part(
+        tmp_path, 1, ["Create"],
+        signatures={
+            "Create": "Task<OperationResult<string>>  Create(\n        Actor actor,\n        CreateRequest request\n    )"
+        },
+    )
+    recovered = recover_service_packages(tmp_path, CONTRACT)
+    assert [record["methods"] for record in recovered] == [["Create"]]
 
 
 def test_child_work_packages_and_unproven_sources_are_excluded(tmp_path):

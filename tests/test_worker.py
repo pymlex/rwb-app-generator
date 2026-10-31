@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -108,13 +109,64 @@ def test_role_rejects_invalid_tools(tmp_path, tool):
         worker.generate("developer", "Implement", "base", Result)
 
 
-def test_role_exhaustion_terminates_without_extra_model_call(tmp_path):
+@pytest.mark.parametrize("stage", ["backend-review-00", "architect", "documentation-00"])
+@pytest.mark.parametrize("max_tool_rounds", [0, 1, 2])
+def test_role_exhaustion_uses_one_schema_checked_final_call(tmp_path, stage, max_tool_rounds):
     lookup = request({"name": "search_knowledge", "query": "contract"})
-    worker = agent(tmp_path, [lookup, lookup], max_tool_rounds=1)
-    with pytest.raises(ValueError, match="exhausted 1 tool rounds"):
-        worker.generate("architect", "Design", "base", Result)
+    worker = agent(
+        tmp_path,
+        [*[lookup] * (max_tool_rounds + 1), {"content": "Final result"}],
+        max_tool_rounds=max_tool_rounds,
+    )
+    result = worker.generate(stage, "Original task", "base", Result)
+    assert result.content == "Final result"
+    assert len(worker.model.calls) == max_tool_rounds + 2
+    final = worker.model.calls[-1]
+    assert final["stage"] == f"{stage}-turn-{max_tool_rounds + 1}-final"
+    assert "No tools are available" in final["instruction"]
+    assert "Original task" in final["instruction"]
+    events = [
+        json.loads(row)
+        for row in (tmp_path / ".pipeline/events.jsonl").read_text().splitlines()
+    ]
+    assert sum(row["kind"] == "agent_tool_executed" for row in events) == max_tool_rounds
+    assert events[-2]["kind"] == "role_agent_finalization_started"
+    assert events[-1]["kind"] == "role_agent_completed"
+    assert events[-1]["finalization"] is True
+
+
+@pytest.mark.parametrize("final", [{}, {"content": "bad", "extra": True}, request({"name": "load_skill", "skill": "backend"})])
+def test_final_call_rejects_invalid_results_and_further_tool_requests(tmp_path, final):
+    lookup = request({"name": "search_knowledge", "query": "contract"})
+    worker = agent(tmp_path, [lookup, final], max_tool_rounds=0)
+    with pytest.raises(ValidationError):
+        worker.generate("backend-review-00", "Review", "base", Result)
     assert len(worker.model.calls) == 2
-    assert "must finish now" in worker.model.calls[-1]["instruction"]
+    events = [
+        json.loads(row)
+        for row in (tmp_path / ".pipeline/events.jsonl").read_text().splitlines()
+    ]
+    assert [row["kind"] for row in events] == ["role_agent_finalization_started"]
+
+
+def test_final_call_keeps_loaded_skills_latest_results_and_provenance(tmp_path):
+    (tmp_path / "contract.json").write_text("ACTUAL_CONTRACT", encoding="utf-8")
+    worker = agent(
+        tmp_path,
+        [
+            request({"name": "load_skill", "skill": "backend"}),
+            request({"name": "read_artifact", "path": "contract.json"}),
+            request({"name": "read_artifact", "path": ".env"}),
+            {"content": "Reviewed"},
+        ],
+    )
+    worker.generate("backend-review-00", "Review actual code", "BASE_CONTEXT", Result)
+    final_context = worker.model.calls[-1]["context"]
+    assert final_context.startswith("BASE_CONTEXT\nROLE TOOL CONTEXT\n")
+    supplied = json.loads(final_context.split("ROLE TOOL CONTEXT\n", 1)[1])
+    assert supplied["loaded_skills"][0]["result"]["skill"] == "backend"
+    assert supplied["latest_tool_results"][0]["result"]["text"] == "ACTUAL_CONTRACT"
+    assert len(supplied["lookup_references"]) == 2
 
 
 def test_oversized_artifact_is_not_truncated(tmp_path):
@@ -239,6 +291,21 @@ def test_tool_budget_reserves_full_longest_prefix_output_cap(tmp_path):
     assert worker._tool_budget("backend-service-07", "instruction", "x" * 90000, schema) == 0
 
 
+def test_numbered_documentation_reserves_full_output_before_loading_artifacts(tmp_path):
+    worker = agent(tmp_path, [finish()])
+    worker.model.settings = SimpleNamespace(
+        tpm_limit=30000,
+        context_limit=32768,
+        max_output_tokens=14000,
+        token_margin=512,
+    )
+    schema = response_envelope(Result)
+    context = "x" * 60000
+    expected = worker._tool_budget("documentation-system", "Write", context, schema)
+    assert 0 < expected < worker.max_read_context_chars
+    assert worker._tool_budget("documentation-00", "Write", context, schema) == expected
+
+
 def test_missing_symbol_returns_catalogue_instead_of_unrelated_code(tmp_path):
     (tmp_path / "part.cs").write_text(CSHARP, encoding="utf-8")
     worker = RoleAgent(
@@ -330,3 +397,31 @@ def test_reloading_same_skill_does_not_duplicate_pinned_body(tmp_path, monkeypat
     final = json.loads(worker.model.calls[2]["context"].split("ROLE TOOL CONTEXT\n", 1)[1])
     assert len(final["loaded_skills"]) == 1
     assert worker.model.calls[2]["context"].count("PINNED_ONCE") == 1
+
+
+def test_service_receives_zone_matching_rules_and_loaded_geospatial_skill(tmp_path):
+    prompt = (
+        Path(__file__).resolve().parents[1] / "generator/prompts/backend-service.md"
+    ).read_text(encoding="utf-8")
+    worker = agent(
+        tmp_path, [request({"name": "load_skill", "skill": "geospatial"}), finish()]
+    )
+    worker.generate("backend-service-01", prompt, "Match supplied zone geometries", Result)
+    call = worker.model.calls[1]
+    context = json.loads(call["context"].split("ROLE TOOL CONTEXT\n", 1)[1])
+    skill = context["loaded_skills"][0]["result"]["text"]
+    for guidance in (call["instruction"], skill):
+        for required in (
+            "LINESTRING and MULTILINESTRING",
+            "ST_DWithin on geography",
+            "configurable",
+            "15 metres",
+            "assumption",
+            "ST_Covers",
+            "GPS-noise threshold in metres",
+            "ST_CollectionExtract(geometry, 2)",
+            "ST_CollectionExtract(geometry, 3)",
+            "ST_Distance on geography in metres",
+            "curbside",
+        ):
+            assert required in guidance
