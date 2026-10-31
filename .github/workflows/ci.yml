@@ -18,11 +18,25 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Create isolated Gitleaks temporary directory
+        id: gitleaks_tmp
+        run: |
+          gitleaks_tmp="$(mktemp -d "$RUNNER_TEMP/gitleaks.XXXXXXXX")"
+          printf 'path=%s\n' "$gitleaks_tmp" >> "$GITHUB_OUTPUT"
       - name: Scan commits for secrets
         uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GITLEAKS_ENABLE_COMMENTS: 'false'
+          TMPDIR: ${{ steps.gitleaks_tmp.outputs.path }}
+      - name: Remove Gitleaks temporary directory
+        if: always()
+        env:
+          GITLEAKS_TMP: ${{ steps.gitleaks_tmp.outputs.path }}
+        run: |
+          if [ -n "$GITLEAKS_TMP" ]; then
+            rm -rf -- "$GITLEAKS_TMP"
+          fi
   test:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, linux, rwb-vm]
