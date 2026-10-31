@@ -653,7 +653,6 @@ class Pipeline:
                 self.prompt("assertion-review"),
                 context,
                 RequirementReviews,
-                WorkPackage,
             )
             if {item.requirement_id for item in result.requirements} != {
                 item.id for item in subset
