@@ -51,6 +51,7 @@ deploy:
     - cat reports/acceptance.log
     - docker compose --profile checks run --rm --build spectral
     - docker compose --profile checks run --rm --build schemathesis
+    - docker compose --profile checks run --rm --build e2e
   environment:
     name: review
 report:

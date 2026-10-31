@@ -189,6 +189,23 @@ services:
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     mem_limit: 384m
+  e2e:
+    build:
+      context: .
+      dockerfile: checks/e2e/Dockerfile
+    profiles: [checks]
+    environment:
+      ADMIN_TOKEN: ${ADMIN_TOKEN}
+      E2E_SCENARIO: ${E2E_SCENARIO:-{}}
+      HOME: /tmp
+    volumes:
+      - ./reports:/reports
+    read_only: true
+    tmpfs: [/tmp]
+    shm_size: 256m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 768m
 volumes:
   database:
   scanner-cache:

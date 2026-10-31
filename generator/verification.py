@@ -203,7 +203,7 @@ def verify(
                 sudo_password,
             )
         )
-        for name, service in [("openapi-lint", "spectral"), ("api-contract", "schemathesis")]:
+        for name, service in [("openapi-lint", "spectral"), ("api-contract", "schemathesis"), ("ui-smoke", "e2e")]:
             checks.append(
                 run_check(
                     root, name,

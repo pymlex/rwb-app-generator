@@ -106,3 +106,16 @@ def test_contract_services_use_live_openapi_and_keep_reports_separate():
     assert "'--checks', 'all'" in schema
     assert "'--output-sanitize', 'true'" in schema
     assert '/reports/schemathesis.xml' in schema
+
+
+def test_e2e_runs_real_browser_with_separate_report_and_no_token_artifacts():
+    service = compose()['services']['e2e']
+    assert service['profiles'] == ['checks'] and service['read_only'] is True
+    assert service['cap_drop'] == ['ALL']
+    assert service['environment']['ADMIN_TOKEN'] == '${ADMIN_TOKEN}'
+    source = (TEMPLATES / 'checks/e2e/smoke.cjs').read_text()
+    assert '/reports/e2e.json' in source
+    assert 'rejected.status() !== 401' in source
+    assert 'created.status() < 200' in source
+    assert 'page.route(' not in source
+    assert 'screenshot(' not in source and 'tracing.start' not in source
