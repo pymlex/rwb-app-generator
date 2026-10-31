@@ -1,6 +1,8 @@
 stages: [build, test, security, deploy, report]
 variables:
   COMPOSE_PROJECT_NAME: "rwb-$CI_PROJECT_ID"
+  APP_IMAGE_TAG: "$CI_PIPELINE_ID"
+  DATABASE_IMAGE_TAG: "17.9-$CI_PIPELINE_ID"
 workflow:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
@@ -40,7 +42,8 @@ security:
   script:
     - docker compose --profile checks build audit
     - docker compose --profile checks run --rm audit
-    - docker compose --profile checks run --rm sast
+    - SAST_SERVICE=$(python3 scripts/sast-service.py)
+    - docker compose --profile checks run --rm "$SAST_SERVICE"
 deploy:
   extends: .platform
   stage: deploy

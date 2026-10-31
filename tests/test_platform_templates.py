@@ -128,9 +128,9 @@ def test_digest_inventory_covers_dockerfiles_and_compose_without_guessing():
     entries = module['inventory'](TEMPLATES)
     assert entries
     assert len(entries) == len({entry['image'] for entry in entries})
-    local = next(entry for entry in entries if entry['kind'] == 'local-build')
-    assert local['image'] == 'rwb-app-generator/postgis:17.9'
-    assert local['command'] is None
+    local = [entry for entry in entries if entry['kind'] == 'local-build']
+    assert len(local) == 8
+    assert all(entry['command'] is None for entry in local)
     documentation = (TEMPLATES / 'checks/IMAGE-DIGESTS.md').read_text()
     for entry in entries:
         assert entry['image'] in documentation
@@ -148,3 +148,31 @@ def test_audit_build_covers_whole_project_without_sending_env_files():
     for required in ('database', 'checks', 'docs', 'docker-compose.yml', '.gitlab-ci.yml'):
         assert required not in exclusions
     assert all('/src' not in volume for volume in service['volumes'])
+
+
+def test_ci_isolates_built_images_per_pipeline_and_supports_sast_fallback():
+    config = yaml.safe_load((TEMPLATES / '.gitlab-ci.yml').read_text())
+    assert config['variables']['APP_IMAGE_TAG'] == '$CI_PIPELINE_ID'
+    assert config['variables']['DATABASE_IMAGE_TAG'] == '17.9-$CI_PIPELINE_ID'
+    for name, service in compose()['services'].items():
+        if 'build' in service:
+            variable = 'DATABASE_IMAGE_TAG' if name == 'database' else 'APP_IMAGE_TAG'
+            assert '${' + variable + ':-' in service['image']
+    commands = config['security']['script']
+    assert 'SAST_SERVICE=$(python3 scripts/sast-service.py)' in commands
+    assert 'docker compose --profile checks run --rm "$SAST_SERVICE"' in commands
+
+
+def test_ci_sast_selection_rejects_unexplained_fallback():
+    import runpy
+
+    import pytest
+
+    select = runpy.run_path(str(TEMPLATES / 'scripts/sast-service.py'))['select']
+    with pytest.raises(ValueError, match='SAST_FALLBACK_REASON'):
+        select('dotnet', '')
+    with pytest.raises(ValueError, match='SAST_ENGINE'):
+        select('disabled', '')
+    assert select('dotnet', 'VM network unavailable') == (
+        'sast-dotnet', {'engine': 'dotnet', 'reason': 'VM network unavailable'},
+    )
