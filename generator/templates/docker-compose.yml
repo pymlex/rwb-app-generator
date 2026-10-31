@@ -128,6 +128,40 @@ services:
       - scanner-cache:/root/.cache
     command: [fs, --scanners, 'vuln,secret', --skip-files, /src/.env, --skip-dirs, '/src/.pipeline,/src/frontend/node_modules', --severity, 'HIGH,CRITICAL', --exit-code, '1', --format, json, --output, /reports/security.json, /src]
     mem_limit: 512m
+  sast:
+    image: semgrep/semgrep:1.145.0
+    profiles: [checks]
+    working_dir: /src
+    environment:
+      SEMGREP_SEND_METRICS: 'off'
+      SEMGREP_ENABLE_VERSION_CHECK: '0'
+      HOME: /tmp
+    volumes:
+      - ./backend:/src/backend:ro
+      - ./frontend/src:/src/frontend/src:ro
+      - ./reports:/reports
+    command: [semgrep, scan, --config, p/csharp, --config, p/typescript, --config, p/secrets, --severity, ERROR, --error, --strict, --metrics, 'off', --disable-version-check, --json-output, /reports/sast.json, /src/backend, /src/frontend/src]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 768m
+  sast-dotnet:
+    image: mcr.microsoft.com/dotnet/sdk:10.0
+    profiles: [checks]
+    working_dir: /app
+    environment:
+      DOTNET_CLI_HOME: /tmp/dotnet
+    volumes:
+      - ./backend:/app
+      - ./reports:/reports
+      - nuget-cache:/root/.nuget/packages
+    command: [dotnet, build, App.csproj, --no-restore, --no-incremental, '-p:SastFallback=true', '-p:ErrorLog=/reports/sast.json,version=2.1']
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 768m
 volumes:
   database:
   scanner-cache:

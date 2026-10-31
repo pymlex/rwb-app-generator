@@ -27,3 +27,19 @@ def test_dependency_and_scanner_containers_restrict_privileges_and_writes():
     assert './backend:/app' in services['backend-lock']['volumes']
     assert services['audit']['command'][services['audit']['command'].index('--exit-code') + 1] == '1'
     assert './reports:/reports' in services['audit']['volumes']
+
+
+def test_sast_scans_fixed_rules_and_blocks_errors():
+    service = compose()['services']['sast']
+    assert service['image'] == 'semgrep/semgrep:1.145.0'
+    assert service['profiles'] == ['checks']
+    command = service['command']
+    for rule in ('p/csharp', 'p/typescript', 'p/secrets'):
+        assert rule in command
+    assert '--error' in command and '--strict' in command
+    assert command[command.index('--severity') + 1] == 'ERROR'
+    assert '/reports/sast.json' in command
+    assert service['read_only'] is True
+    fallback = compose()['services']['sast-dotnet']
+    assert '-p:SastFallback=true' in fallback['command']
+    assert '-p:ErrorLog=/reports/sast.json,version=2.1' in fallback['command']

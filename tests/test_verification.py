@@ -356,3 +356,30 @@ def test_requirement_proof_requires_a_trace_to_the_implementation(reviewed_proje
         3,
     )
     assert result["release_ready"] is False
+
+
+def test_sast_fallback_requires_and_records_a_reason(tmp_path, monkeypatch):
+    from generator.verification import sast
+
+    monkeypatch.setenv('SAST_ENGINE', 'dotnet')
+    monkeypatch.delenv('SAST_FALLBACK_REASON', raising=False)
+    with pytest.raises(ValueError, match='SAST_FALLBACK_REASON'):
+        sast(tmp_path, False)
+    monkeypatch.setenv('SAST_FALLBACK_REASON', 'VM cannot reach semgrep.dev')
+    check = sast(tmp_path, False)
+    assert check.status == 'not_run'
+    assert check.command[-1] == 'sast-dotnet'
+    context = json.loads((tmp_path / 'reports/sast-context.json').read_text())
+    assert context == {'engine': 'dotnet', 'reason': 'VM cannot reach semgrep.dev'}
+
+
+def test_sast_is_added_without_reordering_existing_checks(modular_project, monkeypatch):
+    from generator.verification import verify
+
+    monkeypatch.delenv('SAST_ENGINE', raising=False)
+    checks = verify(modular_project, deploy=True)
+    assert [check.name for check in checks] == [
+        'structure', 'compose-config', 'dependency-lock', 'backend-dependency-lock',
+        'build', 'unit', 'dependency-audit', 'static-analysis', 'deployment', 'acceptance',
+    ]
+    assert next(check for check in checks if check.name == 'static-analysis').status == 'not_run'

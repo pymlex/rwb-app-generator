@@ -109,6 +109,24 @@ def backend_build(root: Path, execute: bool, sudo_password: str | None = None) -
     )
 
 
+def sast(root: Path, execute: bool, sudo_password: str | None = None) -> Check:
+    engine = os.environ.get("SAST_ENGINE", "semgrep")
+    if engine not in {"semgrep", "dotnet"}:
+        raise ValueError("SAST_ENGINE must be semgrep or dotnet")
+    reason = os.environ.get("SAST_FALLBACK_REASON", "").strip() if engine == "dotnet" else ""
+    if engine == "dotnet" and not reason:
+        raise ValueError("SAST_FALLBACK_REASON is required for the .NET fallback")
+    write_json(root / "reports" / "sast-context.json", {"engine": engine, "reason": reason})
+    return run_check(
+        root,
+        "static-analysis",
+        ["docker", "compose", "--profile", "checks", "run", "--rm",
+         "sast-dotnet" if engine == "dotnet" else "sast"],
+        execute,
+        sudo_password,
+    )
+
+
 def verify(
     root: Path, execute: bool = False, deploy: bool = False, sudo_password: str | None = None
 ) -> list[Check]:
@@ -164,6 +182,7 @@ def verify(
             sudo_password,
         )
     )
+    checks.append(sast(root, execute and build_passed, sudo_password))
     if deploy:
         checks.append(
             run_check(
