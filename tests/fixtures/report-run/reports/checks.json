@@ -1,0 +1,6 @@
+[
+  {"name":"build","command":["docker","compose","build"],"status":"passed","exit_code":0,"duration_seconds":2,"log":"built"},
+  {"name":"unit","command":["docker","compose","run","unit"],"status":"failed","exit_code":1,"duration_seconds":1,"log":"one failure"},
+  {"name":"dependency-audit","command":["docker","compose","run","audit"],"status":"failed","exit_code":1,"duration_seconds":3,"log":"HIGH vulnerability"},
+  {"name":"deployment","command":["docker","compose","up"],"status":"not_run","exit_code":null,"duration_seconds":0,"log":"not requested"}
+]
