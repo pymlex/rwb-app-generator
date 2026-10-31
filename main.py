@@ -1,6 +1,7 @@
 import argparse
 import getpass
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -10,6 +11,31 @@ from generator.knowledge import build_index, extract
 from generator.models import Analysis
 from generator.pipeline import Pipeline
 from generator.verification import report, verify
+
+
+def read_answers(path: Path) -> str:
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("Answers must not contain duplicate keys")
+            result[key] = value
+        return result
+
+    try:
+        answers = json.loads(extract(path), object_pairs_hook=unique_object)
+    except json.JSONDecodeError:
+        raise ValueError("Answers must be a JSON object") from None
+    if not isinstance(answers, dict):
+        raise ValueError("Answers must be a JSON object")
+    if any(not re.fullmatch(r"Q-[0-9]{3}", key) for key in answers):
+        raise ValueError("Answers may contain only Q-nnn keys")
+    for value in answers.values():
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("Every answer must be a nonempty string")
+        if len(value.encode("utf-8")) > 4 * 1024:
+            raise ValueError("Every answer must be at most 4 KiB")
+    return json.dumps(answers, ensure_ascii=False)
 
 
 def docker_password(enabled: bool) -> str | None:
@@ -45,10 +71,14 @@ def main():
     if args.command == "index":
         print(json.dumps({"indexed_chunks": build_index(args.sources, args.database)}))
     elif args.command == "generate":
+        try:
+            requirements = extract(args.requirements)
+            answers = read_answers(args.answers) if args.answers else ""
+        except (ValueError, OSError) as exc:
+            parser.error(str(exc))
         sudo_password = docker_password(args.sudo)
-        answers = extract(args.answers) if args.answers else ""
         result = Pipeline(Settings.from_env(), args.output, args.knowledge).run(
-            extract(args.requirements),
+            requirements,
             answers,
             execute=args.execute,
             deploy=args.deploy,
