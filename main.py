@@ -9,6 +9,7 @@ from generator.config import Settings
 from generator.knowledge import build_index, extract
 from generator.models import Analysis
 from generator.pipeline import Pipeline
+from generator.publish import publish
 from generator.verification import report, verify
 
 
@@ -41,9 +42,14 @@ def main():
     check.add_argument("--execute", action="store_true")
     check.add_argument("--deploy", action="store_true")
     check.add_argument("--sudo", action="store_true")
+    publication = sub.add_parser("publish")
+    publication.add_argument("output", type=Path)
+    publication.add_argument("--remote", required=True)
     args = parser.parse_args()
     if args.command == "index":
         print(json.dumps({"indexed_chunks": build_index(args.sources, args.database)}))
+    elif args.command == "publish":
+        print(json.dumps(publish(args.output, args.remote), indent=2))
     elif args.command == "generate":
         sudo_password = docker_password(args.sudo)
         answers = extract(args.answers) if args.answers else ""
