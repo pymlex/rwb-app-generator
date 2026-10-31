@@ -20,6 +20,7 @@ from generator.models import (
 )
 from generator.reference_data import profile_data, validate_contract
 from generator.resume import recover_service_packages
+from generator.source_edits import SourceEdits, prepare_source_edits
 from generator.storage import digest, event, save_batch, source_span, write_json
 from generator.verification import backend_build, report, verify
 from generator.worker import RoleAgent
@@ -583,6 +584,99 @@ class Pipeline:
         return AgentState()
 
     def backend_repair(self, state: AgentState) -> AgentState:
+        feedback = state.get("feedback", [])
+        compiler_lines = list(
+            dict.fromkeys(
+                line.strip()
+                for item in feedback
+                for line in item.get("log", "").splitlines()
+                if re.search(r"\berror CS\d+", line)
+            )
+        )
+        if compiler_lines:
+            allowed = [*BACKEND_CONTRACT, *self.service_paths, "backend/Domain.cs"]
+            affected = {
+                path: [
+                    line
+                    for line in compiler_lines
+                    if re.search(
+                        r"(?:^|[/\\\s])" + re.escape(Path(path).name) + r"\(\d+(?:,\d+)?\)", line
+                    )
+                ]
+                for path in allowed
+                if path.endswith(".cs")
+            }
+            affected = {path: lines for path, lines in affected.items() if lines}
+            if not affected:
+                raise ValueError(
+                    "Compiler diagnostics do not identify an editable generated C# file"
+                )
+            contracts = [
+                path
+                for path in [
+                    "backend/DomainModels.cs",
+                    "backend/DomainSupport.cs",
+                    "backend/DomainService.cs",
+                ]
+                if (self.output / path).is_file()
+            ]
+            attempt = state["backend_repairs"]
+            for index, (path, lines) in enumerate(sorted(affected.items())):
+                original = (self.output / path).read_text(encoding="utf-8")
+                context = json.dumps(
+                    {
+                        "target_path": path,
+                        "target_source": original,
+                        "actual_contracts": self.files(
+                            [item for item in contracts if item != path]
+                        ),
+                        "compiler_diagnostics": lines,
+                    },
+                    ensure_ascii=False,
+                )
+                changes = self.ask(
+                    f"backend-compiler-repair-{attempt}-{index:02}",
+                    "Correct only the demonstrated C# compiler errors in target_path. "
+                    "Return exact source replacements with path, old, new. Each old span must "
+                    "occur exactly once in the unchanged target_source. Include enough surrounding "
+                    "source to make each match unique. All edits are validated together before "
+                    "application. Preserve business behavior, public contracts, and all unrelated "
+                    "code. Do not rewrite the file, remove methods, weaken checks, or add comments.",
+                    context,
+                    SourceEdits,
+                )
+                metadata = self.generated.get(path, {})
+                requirement_ids = metadata.get("requirement_ids")
+                if requirement_ids is None:
+                    requirement_ids = (
+                        getattr(self, "work_packages", {}).get(path, {}).get("requirement_ids")
+                    )
+                if requirement_ids is None:
+                    requirement_ids = [item.id for item in self.analysis.requirements]
+                batch = prepare_source_edits(self.output, changes, {path}, requirement_ids)
+                fingerprint = digest(batch.model_dump_json())
+                checkpoint = (
+                    self.run_dir
+                    / "checkpoints"
+                    / (
+                        f"backend-repair-{attempt}-{Path(path).stem}-applied-{fingerprint[:16]}.json"
+                    )
+                )
+                write_json(checkpoint, batch.model_dump())
+                save_batch(self.output, batch, {path})
+                for artifact in batch.files:
+                    self.generated[artifact.path] = artifact.model_dump(exclude={"content"})
+                self.save_manifest()
+                event(
+                    self.run_dir,
+                    "compiler_edits_applied",
+                    path=path,
+                    edits=len(changes.edits),
+                    checkpoint=str(checkpoint.relative_to(self.run_dir)),
+                    before_sha256=digest(original),
+                    after_sha256=digest(batch.files[0].content),
+                )
+            return AgentState()
         return self.repair(state, True)
 
     def frontend_logic(self, state: AgentState) -> AgentState:

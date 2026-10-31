@@ -18,6 +18,7 @@ STAGE_OUTPUT_CAPS = {
     "backend-service": 10000,
     "backend-routes": 6000,
     "backend-review": 4000,
+    "backend-compiler-repair": 4000,
     "frontend-logic": 8000,
     "frontend-view": 9000,
     "tests": 6000,
