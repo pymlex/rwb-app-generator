@@ -506,6 +506,30 @@ class Pipeline:
             feedback=[] if passed else [check.model_dump()],
         )
 
+    def ask_scoped_review(self, stage, prompt, context, schema, paths, citations):
+        results = []
+        for attempt in range(2):
+            result = self.ask(
+                stage if attempt == 0 else stage + "-scope-retry",
+                prompt if attempt == 0 else prompt + "\nALLOWED REVIEW FILES: "
+                + json.dumps(paths) + ". Cite only these exact paths. Do not cite other files.",
+                context,
+                schema,
+            )
+            results.append(result)
+            outside = [item for item in citations(result) if item.path not in paths]
+            if not outside:
+                break
+            event(
+                self.run_dir,
+                "review_scope_retry" if attempt == 0 else "review_out_of_context_ignored",
+                stage=stage,
+                allowed_paths=paths,
+                outside_paths=sorted({item.path for item in outside}),
+                count=len(outside),
+            )
+        return results
+
     def backend_review(self, state: AgentState) -> AgentState:
         issues = []
         groups = [
@@ -539,23 +563,25 @@ class Pipeline:
                 paths,
                 requirements,
             )
-            reviewed = self.ask(
-                f"backend-review-{index:02}", self.prompt("backend-review"), context, BackendReview
+            reviewed_results = self.ask_scoped_review(
+                f"backend-review-{index:02}", self.prompt("backend-review"), context,
+                BackendReview, paths, lambda result: result.issues,
             )
-            serious_found = any(issue.severity in {"critical", "high"} for issue in reviewed.issues)
-            if reviewed.passes_static_review == serious_found:
-                raise ValueError("Reviewer verdict contradicts its defect severities")
-            for issue in reviewed.issues:
-                if not set(issue.requirement_ids) <= {
-                    item.id for item in self.analysis.requirements
-                }:
-                    raise ValueError("Reviewer cited an unknown requirement")
-                if issue.path not in paths:
-                    raise ValueError("Reviewer cited a file outside its supplied context")
-                issue.source_quote = source_span(
-                    (self.output / issue.path).read_text(encoding="utf-8"), issue.source_quote
-                )
-                issues.append(issue.model_dump())
+            for reviewed in reviewed_results:
+                scoped = [issue for issue in reviewed.issues if issue.path in paths]
+                serious_found = any(issue.severity in {"critical", "high"} for issue in scoped)
+                if len(scoped) == len(reviewed.issues) and reviewed.passes_static_review == serious_found:
+                    raise ValueError("Reviewer verdict contradicts its defect severities")
+                for issue in scoped:
+                    if not set(issue.requirement_ids) <= {
+                        item.id for item in self.analysis.requirements
+                    }:
+                        raise ValueError("Reviewer cited an unknown requirement")
+                    issue.source_quote = source_span(
+                        (self.output / issue.path).read_text(encoding="utf-8"), issue.source_quote
+                    )
+                    if issue.model_dump() not in issues:
+                        issues.append(issue.model_dump())
         write_json(self.output / "reports/backend-review.json", issues)
         serious = [issue for issue in issues if issue["severity"] in {"critical", "high"}]
         return AgentState(review_passed=not serious, repairable=True, feedback=serious)
@@ -778,33 +804,51 @@ class Pipeline:
                 [path, "backend/DomainModels.cs", "backend/Domain.cs"],
                 subset,
             )
-            result = self.ask(
+            results = self.ask_scoped_review(
                 f"assertion-review-{index:02}",
                 self.prompt("assertion-review"),
                 context,
                 RequirementReviews,
+                [path],
+                lambda result: [proof for item in result.requirements for proof in item.evidence],
             )
-            if {item.requirement_id for item in result.requirements} != {
-                item.id for item in subset
-            }:
-                raise ValueError("Assertion reviewer must return exactly the assigned requirements")
             source = (self.output / path).read_text(encoding="utf-8")
-            for reviewed in result.requirements:
-                if reviewed.status == "passed" and (
-                    reviewed.missing_criteria or not reviewed.evidence
-                ):
-                    raise ValueError("Passed assertion review needs complete concrete evidence")
-                for proof in reviewed.evidence:
-                    if proof.path != path or not proof.test_name.startswith(
-                        "test_" + reviewed.requirement_id.replace("-", "_") + "_"
+            merged = {}
+            for attempt, result in enumerate(results):
+                if {item.requirement_id for item in result.requirements} != {
+                    item.id for item in subset
+                }:
+                    raise ValueError("Assertion reviewer must return exactly the assigned requirements")
+                for reviewed in result.requirements:
+                    if reviewed.status == "passed" and (
+                        reviewed.missing_criteria or not reviewed.evidence
                     ):
-                        raise ValueError(
-                            "Assertion evidence must identify an assigned test and requirement"
+                        raise ValueError("Passed assertion review needs complete concrete evidence")
+                    outside = [proof for proof in reviewed.evidence if proof.path != path]
+                    reviewed.evidence = [proof for proof in reviewed.evidence if proof.path == path]
+                    if outside and attempt == len(results) - 1:
+                        reviewed.status = "failed"
+                        reviewed.missing_criteria.extend(
+                            f"Out-of-context evidence discarded: {proof.criterion}" for proof in outside
                         )
-                    proof.source_quote = source_span(source, proof.source_quote)
-                    if not re.search(r"def\s+" + re.escape(proof.test_name) + r"\s*\(", source):
-                        raise ValueError("Assertion reviewer cited a nonexistent test")
-                reviews.append(reviewed.model_dump())
+                    for proof in reviewed.evidence:
+                        if not proof.test_name.startswith(
+                            "test_" + reviewed.requirement_id.replace("-", "_") + "_"
+                        ):
+                            raise ValueError(
+                                "Assertion evidence must identify an assigned test and requirement"
+                            )
+                        proof.source_quote = source_span(source, proof.source_quote)
+                        if not re.search(r"def\s+" + re.escape(proof.test_name) + r"\s*\(", source):
+                            raise ValueError("Assertion reviewer cited a nonexistent test")
+                    previous = merged.get(reviewed.requirement_id)
+                    if previous:
+                        reviewed.evidence = list({proof.model_dump_json(): proof for proof in [*previous.evidence, *reviewed.evidence]}.values())
+                        reviewed.missing_criteria = list(dict.fromkeys([*previous.missing_criteria, *reviewed.missing_criteria]))
+                        if previous.status == "failed":
+                            reviewed.status = "failed"
+                    merged[reviewed.requirement_id] = reviewed
+            reviews.extend(item.model_dump() for item in merged.values())
         write_json(self.output / "reports/requirement-review.json", reviews)
 
     def documenter(self, state: AgentState) -> AgentState:
