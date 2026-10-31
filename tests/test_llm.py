@@ -30,6 +30,36 @@ def install_transport(monkeypatch, handler):
     )
 
 
+def test_environment_proxy_and_redirects_are_disabled(tmp_path, monkeypatch):
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.invalid:3128")
+    monkeypatch.setenv("ALL_PROXY", "http://proxy.invalid:3128")
+    monkeypatch.setenv("NO_PROXY", "")
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(302, headers={"Location": "https://redirect.invalid/"})
+
+    client_type = httpx.Client
+    clients = []
+
+    def make_client(**kwargs):
+        client = client_type(transport=httpx.MockTransport(handler), **kwargs)
+        clients.append(client)
+        return client
+
+    monkeypatch.setattr("generator.llm.httpx.Client", make_client)
+    with pytest.raises(httpx.HTTPStatusError):
+        Qwen(Settings("https://model.invalid/v1", "dummy-key"), tmp_path).generate(
+            "docs", "Write", "input", ArtifactBatch
+        )
+    assert clients
+    assert clients[0]._mounts == {}
+    assert clients[0].follow_redirects is False
+    assert requests
+    assert all(request.url.host == "model.invalid" for request in requests)
+
+
 def test_resume_does_not_pay_for_an_identical_completed_stage(tmp_path, monkeypatch):
     calls = []
 
