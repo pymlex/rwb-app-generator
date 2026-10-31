@@ -119,3 +119,20 @@ def test_e2e_runs_real_browser_with_separate_report_and_no_token_artifacts():
     assert 'created.status() < 200' in source
     assert 'page.route(' not in source
     assert 'screenshot(' not in source and 'tracing.start' not in source
+
+
+def test_digest_inventory_covers_dockerfiles_and_compose_without_guessing():
+    import runpy
+
+    module = runpy.run_path(str(TEMPLATES / 'scripts/image-digests.py'))
+    entries = module['inventory'](TEMPLATES)
+    assert entries
+    assert len(entries) == len({entry['image'] for entry in entries})
+    local = next(entry for entry in entries if entry['kind'] == 'local-build')
+    assert local['image'] == 'rwb-app-generator/postgis:17.9'
+    assert local['command'] is None
+    documentation = (TEMPLATES / 'checks/IMAGE-DIGESTS.md').read_text()
+    for entry in entries:
+        assert entry['image'] in documentation
+        if entry['kind'] == 'registry':
+            assert entry['command'].startswith('docker buildx imagetools inspect ')
