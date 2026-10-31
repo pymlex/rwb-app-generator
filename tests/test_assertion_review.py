@@ -1,6 +1,8 @@
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from generator.models import RequirementReviews
 from generator.pipeline import Pipeline
 
@@ -45,7 +47,8 @@ def test_assertion_review_records_grounded_test_evidence(tmp_path):
     assert report[0]["evidence"][0]["test_name"] == "test_FR_001_create"
 
 
-def test_outside_assertion_evidence_retries_then_fails_coverage_without_crashing(tmp_path):
+@pytest.mark.parametrize("oversized", [False, True])
+def test_outside_assertion_evidence_retries_then_fails_coverage_without_crashing(tmp_path, oversized):
     pipeline = object.__new__(Pipeline)
     pipeline.output = tmp_path
     pipeline.run_dir = tmp_path / ".pipeline"
@@ -54,7 +57,7 @@ def test_outside_assertion_evidence_retries_then_fails_coverage_without_crashing
     pipeline.analysis = SimpleNamespace(requirements=[SimpleNamespace(id="FR-001")])
     (tmp_path / "tests").mkdir()
     (tmp_path / path).write_text("def test_FR_001_create():\n    assert response.status == 201\n")
-    pipeline.context = lambda *args: "Actual test context"
+    pipeline.context = lambda *args: "x" * 65000 if oversized else "Actual test context"
     pipeline.prompt = lambda name: "Review assertions"
     calls = []
 
@@ -70,8 +73,9 @@ def test_outside_assertion_evidence_retries_then_fails_coverage_without_crashing
 
     pipeline.ask = ask
     pipeline.review_assertions()
-    assert len(calls) == 2
-    assert path in calls[1][1]
+    assert len(calls) == (1 if oversized else 2)
+    if not oversized:
+        assert path in calls[1][1]
     saved = json.loads((tmp_path / "reports/requirement-review.json").read_text())
     assert saved[0]["status"] == "failed"
     assert saved[0]["missing_criteria"]

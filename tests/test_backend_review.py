@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from generator.agents import AgentState
+from generator.config import Settings
 from generator.pipeline import BACKEND_CONTRACT, Pipeline
 
 
@@ -85,3 +86,53 @@ def test_in_scope_findings_still_require_valid_requirements_and_quotes(tmp_path,
     with pytest.raises(ValueError, match=error):
         pipeline.backend_review(AgentState())
     assert len(calls) == 1
+
+
+def test_oversized_initial_review_context_uses_artifact_references_without_truncation(tmp_path):
+    pipeline = Pipeline(Settings("http://model/v1", "test-key"), tmp_path, tmp_path / "absent.sqlite")
+    pipeline.reference_data = {}
+    source = "SOURCE_BODY" * 7000
+    path = "backend/Domain.cs"
+    (tmp_path / "backend").mkdir()
+    (tmp_path / path).write_text(source)
+    context = pipeline.review_context("backend_review", {"task": "Review"}, [path], [])
+    assert len(context) < 65000
+    assert "artifact_references" in context
+    assert path in context
+    assert "SOURCE_BODY" not in context
+    assert (tmp_path / path).read_text() == source
+    logged = json.loads((pipeline.run_dir / "events.jsonl").read_text().splitlines()[0])
+    assert logged["kind"] == "review_context_compacted"
+
+
+def test_oversized_retry_is_skipped_and_retains_valid_findings(tmp_path):
+    pipeline, calls = pipeline_fixture(tmp_path, [review([issue("outside.cs"), issue()])])
+    pipeline.context = lambda *args: "x" * 65000
+    state = pipeline.backend_review(AgentState())
+    assert len(calls) == 1
+    assert state["review_passed"] is False
+    assert [item["path"] for item in state["feedback"]] == ["backend/Domain.cs"]
+    events = [json.loads(row) for row in (pipeline.run_dir / "events.jsonl").read_text().splitlines()]
+    assert events[-2]["kind"] == "review_scope_retry_skipped"
+    assert events[-1]["kind"] == "review_out_of_context_ignored"
+
+
+@pytest.mark.parametrize("error,skip", [
+    ("Stage backend-review needs a smaller context or smaller artifact batch: available_output=100", True),
+    ("Reviewer cited an unknown requirement", False),
+])
+def test_retry_only_handles_context_limit_errors(tmp_path, error, skip):
+    pipeline, _ = pipeline_fixture(tmp_path, [review([issue("outside.cs"), issue()])])
+    initial = pipeline.ask
+
+    def ask(stage, *args):
+        if stage.endswith("-scope-retry"):
+            raise ValueError(error)
+        return initial(stage, *args)
+
+    pipeline.ask = ask
+    if skip:
+        assert pipeline.backend_review(AgentState())["review_passed"] is False
+    else:
+        with pytest.raises(ValueError, match="unknown requirement"):
+            pipeline.backend_review(AgentState())

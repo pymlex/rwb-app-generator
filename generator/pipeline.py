@@ -506,16 +506,55 @@ class Pipeline:
             feedback=[] if passed else [check.model_dump()],
         )
 
+    @staticmethod
+    def review_context_limit(error):
+        message = str(error)
+        return (
+            "context has" in message and "split the task before generation (limit" in message
+        ) or (message.startswith("Stage ") and "needs a smaller context or smaller artifact batch" in message)
+
+    def review_context(self, role, task, paths, requirements):
+        try:
+            return self.context(role, task, paths, requirements)
+        except ValueError as error:
+            if not self.review_context_limit(error):
+                raise
+            event(self.run_dir, "review_context_compacted", role=role, paths=paths, reason=str(error))
+            task = {
+                **task,
+                "artifact_references": [
+                    {"path": path, "sha256": digest((self.output / path).read_text(encoding="utf-8"))}
+                    for path in paths
+                ],
+                "evidence_instruction": "Use read_artifact to inspect these actual files before citing them. Select C# members by symbol. File bodies were not truncated.",
+            }
+            return self.context(role, task, [], requirements)
+
     def ask_scoped_review(self, stage, prompt, context, schema, paths, citations):
         results = []
         for attempt in range(2):
-            result = self.ask(
-                stage if attempt == 0 else stage + "-scope-retry",
+            instruction = (
                 prompt if attempt == 0 else prompt + "\nALLOWED REVIEW FILES: "
-                + json.dumps(paths) + ". Cite only these exact paths. Do not cite other files.",
-                context,
-                schema,
+                + json.dumps(paths) + ". Cite only these exact paths. Do not cite other files."
             )
+            try:
+                if attempt and len(context) + len(instruction) > 65000:
+                    raise ValueError("Stage review retry needs a smaller context or smaller artifact batch")
+                result = self.ask(
+                    stage if attempt == 0 else stage + "-scope-retry",
+                    instruction, context, schema,
+                )
+            except ValueError as error:
+                if not attempt or not self.review_context_limit(error):
+                    raise
+                event(self.run_dir, "review_scope_retry_skipped", stage=stage, reason=str(error))
+                outside = [item for item in citations(results[-1]) if item.path not in paths]
+                event(
+                    self.run_dir, "review_out_of_context_ignored", stage=stage,
+                    allowed_paths=paths, outside_paths=sorted({item.path for item in outside}),
+                    count=len(outside),
+                )
+                break
             results.append(result)
             outside = [item for item in citations(result) if item.path not in paths]
             if not outside:
@@ -554,7 +593,7 @@ class Pipeline:
                     for item in self.blueprint.endpoints
                     if item.path in package["endpoint_paths"]
                 ]
-            context = self.context(
+            context = self.review_context(
                 "backend_review",
                 {
                     "task": "Review supplied module only. Other interface methods are implemented in separate partial files. Fixed helpers are trusted platform primitives.",
@@ -798,7 +837,7 @@ class Pipeline:
         reviews = []
         for index, path in enumerate(self.test_paths):
             subset = self.analysis.requirements[index * 4 : index * 4 + 4]
-            context = self.context(
+            context = self.review_context(
                 "tester",
                 {"task": "Independent assertion review of the supplied requirement group"},
                 [path, "backend/DomainModels.cs", "backend/Domain.cs"],
