@@ -21,7 +21,7 @@ from generator.models import (
 from generator.reference_data import profile_data, validate_contract
 from generator.resume import recover_service_packages
 from generator.source_edits import SourceEdits, prepare_source_edits
-from generator.storage import digest, event, save_batch, source_span, write_json
+from generator.storage import artifact_path, digest, event, save_batch, source_span, write_json
 from generator.verification import backend_build, report, verify
 from generator.worker import RoleAgent
 
@@ -40,6 +40,41 @@ FRONTEND = [
     "frontend/src/app.html",
     "frontend/src/app.css",
 ]
+
+
+MAX_DATA_FILE_BYTES = 50 * 1024 * 1024
+MAX_DATA_TOTAL_BYTES = 100 * 1024 * 1024
+
+
+def copy_data(source: Path, output: Path):
+    if not source.is_dir():
+        raise ValueError("Data input must be a directory")
+    validated = []
+    total = 0
+    for path in sorted(source.glob("*.json")):
+        if path.is_symlink() or not path.is_file():
+            raise ValueError("Data JSON inputs must be regular files, without symlinks")
+        size = path.stat().st_size
+        if size > MAX_DATA_FILE_BYTES:
+            raise ValueError("Data JSON file exceeds 50 MiB")
+        if total + size > MAX_DATA_TOTAL_BYTES:
+            raise ValueError("Data JSON files exceed 100 MiB in total")
+        with path.open("rb") as stream:
+            raw = stream.read(MAX_DATA_FILE_BYTES + 1)
+        if len(raw) > MAX_DATA_FILE_BYTES:
+            raise ValueError("Data JSON file exceeds 50 MiB")
+        total += len(raw)
+        if total > MAX_DATA_TOTAL_BYTES:
+            raise ValueError("Data JSON files exceed 100 MiB in total")
+        try:
+            json.loads(raw.decode("utf-8-sig"))
+        except (ValueError, RecursionError):
+            raise ValueError("Data file must contain valid UTF-8 JSON") from None
+        target = artifact_path(output, f"backend/data/{path.name}")
+        validated.append((target, raw))
+    for target, raw in validated:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(raw)
 
 
 def service_groups(source: str) -> list[list[str]]:
@@ -856,17 +891,20 @@ class Pipeline:
         execute: bool = False,
         deploy: bool = False,
         sudo_password: str | None = None,
+        data: Path | None = None,
     ):
         started = time.monotonic()
         self.requirements, self.answers = requirements, answers
         self.execute, self.deploy, self.sudo_password = execute, deploy, sudo_password
-        self.run_dir.mkdir(parents=True, exist_ok=True)
         identity = digest(requirements)
         identity_file = self.run_dir / "input.sha256"
         if identity_file.exists() and identity_file.read_text() != identity:
             raise ValueError(
                 "Output directory belongs to different requirements. Use a new output directory."
             )
+        if data is not None:
+            copy_data(data, self.output)
+        self.run_dir.mkdir(parents=True, exist_ok=True)
         identity_file.write_text(identity)
         event(self.run_dir, "run_started", input_sha256=identity)
         shutil.copytree(ROOT / "templates", self.output, dirs_exist_ok=True)

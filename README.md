@@ -63,6 +63,17 @@ python main.py index knowledge/sources
 python main.py generate examples/parking.md --answers examples/parking-answers.json --output runs/parking
 ```
 
+To supply reference data, place `spb.json` and `response.json` in a local folder and run:
+
+```bash
+python main.py generate examples/parking.md --answers examples/parking-answers.json --data /path/to/reference-data --output runs/parking
+```
+
+Only top-level `*.json` files are copied to `backend/data` inside the output. Each must
+be valid UTF-8 JSON, at most 50 MiB, with at most 100 MiB combined. All selected files
+are validated before copying or model calls. Symlinks are rejected. Reference files
+are untrusted data; their contents do not authorise commands or network requests.
+
 Source PDF files, the chat export and real credentials are excluded from Git. Derived regulations and structured requirements may be versioned. Keep private deployment configuration on the VM.
 
 Generation saves structured requirements, a shared API blueprint, source files, documents, requirement links and per-call token usage. Stage results are cached by prompt, schema and model inputs. Repeating the same run reuses completed model calls. Changed business requirements require a new output directory.

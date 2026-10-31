@@ -59,6 +59,7 @@ def main():
     generate.add_argument("--output", type=Path, required=True)
     generate.add_argument("--knowledge", type=Path, default=Path("knowledge/index.sqlite"))
     generate.add_argument("--answers", type=Path)
+    generate.add_argument("--data", type=Path, help="Directory of reference JSON files")
     generate.add_argument("--execute", action="store_true")
     generate.add_argument("--deploy", action="store_true")
     generate.add_argument("--sudo", action="store_true")
@@ -83,6 +84,7 @@ def main():
             execute=args.execute,
             deploy=args.deploy,
             sudo_password=sudo_password,
+            data=args.data,
         )
         print(json.dumps(result, indent=2))
         if result["status"] == "failed":
