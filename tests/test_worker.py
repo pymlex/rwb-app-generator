@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -330,3 +331,31 @@ def test_reloading_same_skill_does_not_duplicate_pinned_body(tmp_path, monkeypat
     final = json.loads(worker.model.calls[2]["context"].split("ROLE TOOL CONTEXT\n", 1)[1])
     assert len(final["loaded_skills"]) == 1
     assert worker.model.calls[2]["context"].count("PINNED_ONCE") == 1
+
+
+def test_service_receives_zone_matching_rules_and_loaded_geospatial_skill(tmp_path):
+    prompt = (
+        Path(__file__).resolve().parents[1] / "generator/prompts/backend-service.md"
+    ).read_text(encoding="utf-8")
+    worker = agent(
+        tmp_path, [request({"name": "load_skill", "skill": "geospatial"}), finish()]
+    )
+    worker.generate("backend-service-01", prompt, "Match supplied zone geometries", Result)
+    call = worker.model.calls[1]
+    context = json.loads(call["context"].split("ROLE TOOL CONTEXT\n", 1)[1])
+    skill = context["loaded_skills"][0]["result"]["text"]
+    for guidance in (call["instruction"], skill):
+        for required in (
+            "LINESTRING and MULTILINESTRING",
+            "ST_DWithin on geography",
+            "configurable",
+            "15 metres",
+            "assumption",
+            "ST_Covers",
+            "GPS-noise threshold in metres",
+            "ST_CollectionExtract(geometry, 2)",
+            "ST_CollectionExtract(geometry, 3)",
+            "ST_Distance on geography in metres",
+            "curbside",
+        ):
+            assert required in guidance

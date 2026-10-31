@@ -35,3 +35,17 @@ the actual stored vehicle and producing the specified events.
 Implement every demo step as a real call to domain operations. Do not clear normal user data in reset.
 No real charges or refunds. Use an adapter for the simulated provider confirmation and document it.
 Do not call any LLM or unrelated service. No TODOs, empty workflow methods, fake success or comments.
+
+For geospatial zone matching, LINESTRING and MULTILINESTRING require ST_DWithin on geography
+using a configurable lane-distance threshold in metres. Treat a default of 15 metres as a documented
+approximation assumption, not an authoritative boundary. Never replace source lines with polygons.
+For POLYGON and MULTIPOLYGON use ST_Covers, including boundary points, plus a separate configurable
+GPS-noise threshold in metres via ST_DWithin on geography for nearby outside points marked approximate.
+For GEOMETRYCOLLECTION use ST_CollectionExtract(geometry, 2) for lines and
+ST_CollectionExtract(geometry, 3) for polygons, then apply the corresponding matching rule.
+Skip empty components and never cast an unfiltered mixed collection to geography.
+When several zones match, select the nearest by ST_Distance on geography in metres and use a stable
+source identifier to break ties. Preserve source geometry and expose approximation metadata.
+Provide deterministic fixtures so generated acceptance tests can assert a curbside line match,
+inside/outside lane thresholds, multiline, polygon interior/boundary, GPS noise, mixed/empty
+collections and nearest-zone selection. Use actual source coordinates when reference data exists.

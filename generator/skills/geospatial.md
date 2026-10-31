@@ -17,3 +17,18 @@ Render real source geometry and recorded routes, fit their actual bounds, and la
 Derive demonstration route coordinates from actual valid source features. Do not assume that
 arbitrary fixture coordinates lie inside an imported zone. Ignore empty geometries for matching.
 
+For LINESTRING and MULTILINESTRING zones, use ST_DWithin on geography with a configurable
+lane-distance threshold in metres. A default of 15 metres is an explicit approximation assumption,
+not a measured lane width or an authoritative boundary. Preserve the source line geometry.
+For POLYGON and MULTIPOLYGON zones, use ST_Covers for interior and boundary points. Apply a
+separate configurable GPS-noise threshold in metres with ST_DWithin on geography for nearby
+outside points, marking those matches approximate. Document the threshold and its assumption.
+For GEOMETRYCOLLECTION, use ST_CollectionExtract(geometry, 2) for linear components and
+ST_CollectionExtract(geometry, 3) for polygon components, applying the respective rules to each.
+Ignore empty extracted components. Never cast an unfiltered mixed collection to geography.
+If several zones match, choose the nearest by ST_Distance on geography in metres, with a stable
+source identifier as tie-breaker. Return the selected source geometry and approximation metadata.
+Acceptance tests must cover a curbside point near a line, points inside and outside the configured
+line threshold, a multiline, polygon interior and boundary, GPS noise, mixed and empty collections,
+and overlapping candidates where the nearest zone wins. Derive coordinates from valid fixtures.
+
