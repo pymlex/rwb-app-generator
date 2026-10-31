@@ -56,3 +56,36 @@ def test_nginx_policies_allow_pwa_maps_fonts_and_geolocation():
     assert 'https://fonts.googleapis.com' in csp and 'https://fonts.gstatic.com' in csp
     assert csp.endswith('always;')
     assert 'Permissions-Policy "geolocation=(self), camera=(), microphone=(), payment=()" always;' in config
+
+
+def test_gitlab_stages_keep_command_order_and_deploy_only_default_branch():
+    config = yaml.safe_load((TEMPLATES / '.gitlab-ci.yml').read_text())
+    assert config['stages'] == ['build', 'test', 'security', 'deploy', 'report']
+    platform = config['.platform']
+    assert platform['resource_group'] == 'rwb-$CI_PROJECT_ID'
+    assert platform['tags'] == ['organiser-vm']
+    assert platform['artifacts']['when'] == 'always'
+    assert 'backend/packages.lock.json' in platform['artifacts']['paths']
+    for name in config['stages']:
+        assert config[name]['extends'] == '.platform'
+        assert config[name]['stage'] == name
+        assert all(isinstance(command, str) for command in config[name]['script'])
+    commands = [command for name in config['stages'] for command in config[name]['script']]
+    original = [
+        'docker compose config --quiet',
+        'docker compose --profile checks run --rm lock',
+        'docker compose --profile checks run --rm backend-lock',
+        'docker compose --parallel 1 build',
+        'docker compose --profile checks run --rm --build unit > reports/unit.log 2>&1 || { cat reports/unit.log; exit 1; }',
+        'cat reports/unit.log',
+        'docker compose --profile checks run --rm audit',
+        'docker compose up -d --wait --wait-timeout 180 frontend',
+        'docker compose --profile checks run --rm acceptance > reports/acceptance.log 2>&1 || { cat reports/acceptance.log; exit 1; }',
+        'cat reports/acceptance.log',
+    ]
+    assert [command for command in commands if command in original] == original
+    assert 'merge_request_event' in config['workflow']['rules'][0]['if']
+    rule = config['deploy']['rules'][0]['if']
+    assert '$CI_PIPELINE_SOURCE != "merge_request_event"' in rule
+    assert '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH' in rule
+    assert config['report']['when'] == 'always'

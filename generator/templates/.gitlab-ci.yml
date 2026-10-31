@@ -1,29 +1,59 @@
-stages: [release]
+stages: [build, test, security, deploy, report]
 variables:
   COMPOSE_PROJECT_NAME: "rwb-$CI_PROJECT_ID"
-release:
-  stage: release
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - when: never
+.platform:
   resource_group: "rwb-$CI_PROJECT_ID"
   tags: [organiser-vm]
-  rules:
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-  script:
+  before_script:
     - mkdir -p reports
+    - if test "$CI_PIPELINE_SOURCE" = "merge_request_event"; then python3 scripts/configure.py; fi
     - if test -n "${APP_ENV_FILE:-}"; then cp "$APP_ENV_FILE" .env; fi
     - test -f .env || { echo "Provide the protected APP_ENV_FILE file variable with stable application credentials"; exit 1; }
     - chmod 600 .env
+  after_script:
+    - rm -f .env
+  artifacts:
+    when: always
+    paths: [reports/, frontend/package-lock.json, backend/packages.lock.json]
+build:
+  extends: .platform
+  stage: build
+  script:
     - docker compose config --quiet
     - docker compose --profile checks run --rm lock
     - docker compose --profile checks run --rm backend-lock
     - docker compose --parallel 1 build
+test:
+  extends: .platform
+  stage: test
+  script:
     - docker compose --profile checks run --rm --build unit > reports/unit.log 2>&1 || { cat reports/unit.log; exit 1; }
     - cat reports/unit.log
+security:
+  extends: .platform
+  stage: security
+  script:
     - docker compose --profile checks run --rm audit
+    - docker compose --profile checks run --rm sast
+deploy:
+  extends: .platform
+  stage: deploy
+  rules:
+    - if: '$CI_PIPELINE_SOURCE != "merge_request_event" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+  script:
     - docker compose up -d --wait --wait-timeout 180 frontend
     - docker compose --profile checks run --rm acceptance > reports/acceptance.log 2>&1 || { cat reports/acceptance.log; exit 1; }
     - cat reports/acceptance.log
-  artifacts:
-    when: always
-    paths: [reports/, frontend/package-lock.json]
   environment:
     name: review
+report:
+  extends: .platform
+  stage: report
+  when: always
+  script:
+    - python3 scripts/ci-report.py
