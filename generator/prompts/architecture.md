@@ -12,3 +12,9 @@ When domain tables are needed, create SQL migrations. Available Store JSON docum
 auxiliary facility and should not replace relational constraints on critical business state.
 Do not introduce extra dependencies or additional services beyond the fixed platform.
 Design all workflows so they can be demonstrated through API and Angular UI without editing source.
+For long timers, add admin-only deterministic demo clock advance and explicit scenario-step
+operations. Their responses expose the resulting state and clock time. Starting a scenario
+without a step mechanism cannot demonstrate its transitions. Keep actual and demo clocks distinct.
+Reference-data profiles are mandatory integration facts. Model their actual field types,
+source identifiers and geometry types. Include source identifiers and approximation metadata
+in API DTOs. Do not replace supplied linear street features with fabricated polygon boundaries.

@@ -1,7 +1,9 @@
+from datetime import UTC, datetime, timedelta
+
 import httpx
 import pytest
 
-from generator.budget import Budget, plan_budget, retry_delay
+from generator.budget import Budget, admission_delay, plan_budget, retry_delay
 from generator.config import Settings
 
 
@@ -22,6 +24,31 @@ def test_original_frontend_size_gets_an_admissible_stage_cap():
     assert budget.output_cap == 8192
     assert budget.reservation + 512 <= 30000
     assert budget.context_estimate + 512 <= 32768
+
+
+@pytest.mark.parametrize("index", range(7))
+@pytest.mark.parametrize(
+    "limits,tokenizer_input,expected",
+    [
+        ({}, 1000, 12000),
+        ({"max_output_tokens": 7000}, 1000, 7000),
+        ({"context_limit": 12000}, 1000, 10488),
+        ({"tpm_limit": 10000}, 1000, 9487),
+    ],
+)
+def test_numbered_documentation_stages_get_full_cap_within_all_limits(
+    index, limits, tokenizer_input, expected
+):
+    settings = Settings("http://model/v1", "test-key", **limits)
+    with httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, json={"total_tokens": tokenizer_input})
+        )
+    ) as client:
+        budget = plan_budget(client, settings, f"documentation-{index:02}-turn-0", [])
+    assert budget.output_cap == expected
+    assert budget.reservation + settings.token_margin <= settings.tpm_limit
+    assert budget.context_estimate + settings.token_margin <= settings.context_limit
 
 
 def test_request_too_large_for_a_complete_artifact_is_rejected_before_generation():
@@ -77,3 +104,51 @@ def test_unclassified_failure_is_not_blindly_retried():
     budget = Budget(5000, 6000, 8000, 13000, 14000, "local_estimate")
     assert retry_delay(httpx.Response(429, text="unknown limit"), budget) is None
     assert retry_delay(httpx.Response(503, text="backend unavailable"), budget) is None
+
+
+def completion(now, tokens, age=0, identity="jury-quota", kind="model_completed"):
+    return {
+        "kind": kind,
+        "quota_identity": identity,
+        "time": (now - timedelta(seconds=age)).isoformat(),
+        "usage": {"total_tokens": tokens},
+    }
+
+
+def test_admission_waits_for_observed_actual_usage_without_issuing_a_failed_request():
+    now = datetime(2026, 10, 31, tzinfo=UTC)
+    events = [completion(now, 21331, age=12)]
+    assert admission_delay(events, 23020, 30000, "jury-quota", now) == 49
+
+
+def test_admission_does_not_wait_when_recent_usage_and_reservation_fit():
+    now = datetime(2026, 10, 31, tzinfo=UTC)
+    events = [completion(now, 7295, age=12)]
+    assert admission_delay(events, 22000, 30000, "jury-quota", now) == 0
+    assert admission_delay(events, 22705, 30000, "jury-quota", now) == 0
+
+
+def test_admission_rechecks_after_earliest_tracked_completion_expires():
+    now = datetime(2026, 10, 31, tzinfo=UTC)
+    events = [completion(now, 10000, age=50), completion(now, 10000, age=10)]
+    assert admission_delay(events, 15000, 30000, "jury-quota", now) == 11
+    assert admission_delay(events, 15000, 30000, "jury-quota", now + timedelta(seconds=11)) == 0
+    assert admission_delay(events, 25000, 30000, "jury-quota", now + timedelta(seconds=11)) == 40
+
+
+def test_admission_skips_old_unidentified_failed_and_cached_calls():
+    now = datetime(2026, 10, 31, tzinfo=UTC)
+    events = [
+        completion(now, 29000, age=61),
+        completion(now, 29000, identity="other-quota"),
+        completion(now, 29000, kind="model_http_failure"),
+        completion(now, 29000, kind="cache_hit"),
+        completion(now, 29000, identity=None),
+        {"kind": "model_completed", "quota_identity": "jury-quota", "time": now.isoformat()},
+    ]
+    assert admission_delay(events, 29000, 30000, "jury-quota", now) == 0
+
+
+def test_admission_maximum_wait_is_one_conservative_window():
+    now = datetime(2026, 10, 31, tzinfo=UTC)
+    assert admission_delay([completion(now, 10000)], 25000, 30000, "jury-quota", now) == 61

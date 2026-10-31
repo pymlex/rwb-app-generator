@@ -13,7 +13,16 @@ STAGE_OUTPUT_CAPS = {
     "architecture": 6000,
     "backend": 14000,
     "frontend": 8192,
+    "backend-models": 8000,
+    "backend-plan": 4000,
+    "backend-service": 10000,
+    "backend-routes": 6000,
+    "backend-review": 4000,
+    "backend-compiler-repair": 4000,
+    "frontend-logic": 8000,
+    "frontend-view": 9000,
     "tests": 6000,
+    "documentation": 12000,
     "documentation-system": 12000,
     "documentation-handover": 8000,
 }
@@ -27,6 +36,35 @@ class Budget:
     reservation: int
     context_estimate: int
     counter_source: str
+
+
+def admission_delay(
+    events: list[dict],
+    reservation: int,
+    limit: int,
+    quota_identity: str,
+    now: datetime,
+) -> float:
+    if reservation > limit:
+        raise ValueError("Request reservation exceeds the complete token window")
+    recent = []
+    for item in events:
+        if item.get("kind") != "model_completed" or item.get("quota_identity") != quota_identity:
+            continue
+        usage = item.get("usage")
+        timestamp = item.get("time")
+        if not isinstance(usage, dict) or not isinstance(timestamp, str):
+            continue
+        tokens = usage.get("total_tokens")
+        if type(tokens) is not int or tokens <= 0:
+            continue
+        completed = datetime.fromisoformat(timestamp)
+        age = (now - completed).total_seconds()
+        if 0 <= age < 61:
+            recent.append((tokens, 61 - age))
+    if reservation + sum(tokens for tokens, _ in recent) <= limit:
+        return 0.0
+    return min(delay for _, delay in recent)
 
 
 def plan_budget(
@@ -47,7 +85,9 @@ def plan_budget(
     if result.get("error"):
         raise ValueError(f"Token counter rejected the request: {result.get('error_message')}")
     tokenizer_input = result["total_tokens"]
-    desired = min(settings.max_output_tokens, STAGE_OUTPUT_CAPS.get(stage, 10000))
+    matching = [name for name in STAGE_OUTPUT_CAPS if stage == name or stage.startswith(name + "-")]
+    cap = STAGE_OUTPUT_CAPS[max(matching, key=len)] if matching else 9000
+    desired = min(settings.max_output_tokens, cap)
     available = min(
         settings.tpm_limit - proxy_input - settings.token_margin,
         settings.context_limit - tokenizer_input - settings.token_margin,
