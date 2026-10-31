@@ -87,7 +87,9 @@ class Qwen:
             {"role": "system", "content": SYSTEM},
             {"role": "user", "content": prompt},
         ]
-        with httpx.Client(timeout=self.settings.timeout) as client:
+        with httpx.Client(
+            timeout=self.settings.timeout, trust_env=False, follow_redirects=False
+        ) as client:
             budget = plan_budget(client, self.settings, stage, messages)
             event(self.run, "token_budget", stage=stage, **asdict(budget))
             for attempt in range(3):
