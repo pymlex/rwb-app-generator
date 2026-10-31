@@ -9,6 +9,7 @@ from pathlib import Path
 from generator.agents import AgentState, RoleGraph, SkillLoader
 from generator.config import Settings
 from generator.llm import OutputLimitExceeded, Qwen
+from generator.metrics import write_metrics
 from generator.models import (
     Analysis,
     ArtifactBatch,
@@ -903,6 +904,7 @@ class Pipeline:
         )
         state = graph.invoke(AgentState())
         write_json(self.run_dir / "graph-state.json", state)
+        write_metrics(self.output, self.checks, state["status"], time.monotonic() - started)
         if state["status"] == "needs_clarification":
             return {
                 "status": "needs_clarification",
@@ -919,4 +921,5 @@ class Pipeline:
             }
         result = report(self.output, self.analysis, self.checks, time.monotonic() - started)
         event(self.run_dir, "run_completed", **result)
+        write_metrics(self.output, self.checks, result["status"], time.monotonic() - started)
         return result
