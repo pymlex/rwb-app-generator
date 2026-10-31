@@ -11,7 +11,10 @@ object in the invoking environment. Selectors are Playwright CSS selectors:
 {"tokenInput":"#token","signIn":"#login","list":"#items","openCreate":"#new-item","create":"#save-item","fields":{"#name":"$unique","#quantity":"2"},"createdText":"$unique","error":"[role=alert]"}
 ```
 
-`$unique` is replaced per run. Configure actual domain-valid values and selectors
+`$unique` is replaced per run in text values. Field values can also specify UI
+operations: `{"select":"item-id"}` for a native select, `{"option":"Display text"}`
+for a Material select, `{"check":true}` for a checkbox, or `{"click":true}`.
+These operations use the real controls and do not inject data into application state. Configure actual domain-valid values and selectors
 from the generated UI. A missing element, failed mutation, absent rendered result,
 or absent server error fails the check and is recorded in `reports/e2e.json`.
 Use `openCreate` when each mutation needs a fresh dialog. Workflows with multiple

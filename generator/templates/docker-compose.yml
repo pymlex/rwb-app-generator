@@ -1,7 +1,7 @@
 services:
   database:
     build: ./database
-    image: rwb-app-generator/postgis:${DATABASE_IMAGE_TAG:-17.9}
+    image: ${COMPOSE_PROJECT_NAME:-rwb-app-generator}/postgis:${DATABASE_IMAGE_TAG:-17.9}
     environment:
       POSTGRES_DB: app
       POSTGRES_USER: app
@@ -35,7 +35,7 @@ services:
       retries: 20
     mem_limit: 640m
   backend:
-    image: rwb-app-generator/backend:${APP_IMAGE_TAG:-local}
+    image: ${COMPOSE_PROJECT_NAME:-rwb-app-generator}/backend:${APP_IMAGE_TAG:-local}
     build: ./backend
     environment:
       DATABASE_URL: Host=database;Database=app;Username=app;Password=${POSTGRES_PASSWORD}
@@ -50,7 +50,7 @@ services:
         condition: service_healthy
     mem_limit: 384m
   frontend:
-    image: rwb-app-generator/frontend:${APP_IMAGE_TAG:-local}
+    image: ${COMPOSE_PROJECT_NAME:-rwb-app-generator}/frontend:${APP_IMAGE_TAG:-local}
     build: ./frontend
     ports:
       - '${APP_PORT:-8080}:8080'
@@ -91,7 +91,7 @@ services:
     command: [dotnet, restore, App.csproj, --use-lock-file]
     mem_limit: 512m
   unit:
-    image: rwb-app-generator/unit:${APP_IMAGE_TAG:-local}
+    image: ${COMPOSE_PROJECT_NAME:-rwb-app-generator}/unit:${APP_IMAGE_TAG:-local}
     build:
       context: .
       dockerfile: backend-unit/Dockerfile
@@ -115,7 +115,7 @@ services:
     security_opt: [no-new-privileges:true]
     mem_limit: 128m
   audit:
-    image: rwb-app-generator/audit:${APP_IMAGE_TAG:-local}
+    image: ${COMPOSE_PROJECT_NAME:-rwb-app-generator}/audit:${APP_IMAGE_TAG:-local}
     build:
       context: .
       dockerfile: checks/audit/Dockerfile
@@ -164,7 +164,7 @@ services:
     security_opt: [no-new-privileges:true]
     mem_limit: 768m
   spectral:
-    image: rwb-app-generator/spectral:${APP_IMAGE_TAG:-local}
+    image: ${COMPOSE_PROJECT_NAME:-rwb-app-generator}/spectral:${APP_IMAGE_TAG:-local}
     build:
       context: .
       dockerfile: checks/spectral/Dockerfile
@@ -177,7 +177,7 @@ services:
     security_opt: [no-new-privileges:true]
     mem_limit: 384m
   schemathesis:
-    image: rwb-app-generator/schemathesis:${APP_IMAGE_TAG:-local}
+    image: ${COMPOSE_PROJECT_NAME:-rwb-app-generator}/schemathesis:${APP_IMAGE_TAG:-local}
     build:
       context: .
       dockerfile: checks/schemathesis/Dockerfile
@@ -193,14 +193,14 @@ services:
     security_opt: [no-new-privileges:true]
     mem_limit: 384m
   e2e:
-    image: rwb-app-generator/e2e:${APP_IMAGE_TAG:-local}
+    image: ${COMPOSE_PROJECT_NAME:-rwb-app-generator}/e2e:${APP_IMAGE_TAG:-local}
     build:
       context: .
       dockerfile: checks/e2e/Dockerfile
     profiles: [checks]
     environment:
       ADMIN_TOKEN: ${ADMIN_TOKEN}
-      E2E_SCENARIO: ${E2E_SCENARIO:-{}}
+      E2E_SCENARIO: ${E2E_SCENARIO:-}
       HOME: /tmp
     volumes:
       - ./reports:/reports

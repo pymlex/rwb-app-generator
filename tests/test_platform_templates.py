@@ -158,6 +158,7 @@ def test_ci_isolates_built_images_per_pipeline_and_supports_sast_fallback():
         if 'build' in service:
             variable = 'DATABASE_IMAGE_TAG' if name == 'database' else 'APP_IMAGE_TAG'
             assert '${' + variable + ':-' in service['image']
+            assert '${COMPOSE_PROJECT_NAME:-rwb-app-generator}/' in service['image']
     commands = config['security']['script']
     assert 'SAST_SERVICE=$(python3 scripts/sast-service.py)' in commands
     assert 'docker compose --profile checks run --rm "$SAST_SERVICE"' in commands

@@ -14,3 +14,27 @@ test('form data respects text length and email type', () => {
 test('browser error reports remove every occurrence of the access token', () => {
   assert.equal(redact('fill secret failed secret', 'secret'), 'fill [REDACTED] failed [REDACTED]');
 });
+
+test('scenario fields use actual select, checkbox and Material UI operations', async () => {
+  const { fillFields } = require('./smoke.cjs');
+  const events = [];
+  const control = selector => ({
+    fill: async value => events.push([selector, 'fill', value]),
+    selectOption: async value => events.push([selector, 'select', value]),
+    setChecked: async value => events.push([selector, 'check', value]),
+    click: async () => events.push([selector, 'click'])
+  });
+  const page = {
+    locator: control,
+    getByRole: (role, options) => control(`${role}:${options.name}`)
+  };
+  await fillFields(page, {
+    '#name': '$unique', '#native': { select: '17' }, '#consent': { check: true },
+    '#material': { option: 'Driver' }, '#action': { click: true }
+  }, 'smoke-42');
+  assert.deepEqual(events, [
+    ['#name', 'fill', 'smoke-42'], ['#native', 'select', '17'], ['#consent', 'check', true],
+    ['#material', 'click'], ['option:Driver', 'click'], ['#action', 'click']
+  ]);
+  await assert.rejects(fillFields(page, { '#name': { typo: true } }, 'x'));
+});
