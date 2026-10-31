@@ -356,3 +356,53 @@ def test_requirement_proof_requires_a_trace_to_the_implementation(reviewed_proje
         3,
     )
     assert result["release_ready"] is False
+
+
+def test_sast_fallback_requires_and_records_a_reason(tmp_path, monkeypatch):
+    from generator.verification import sast
+
+    monkeypatch.setenv('SAST_ENGINE', 'dotnet')
+    monkeypatch.delenv('SAST_FALLBACK_REASON', raising=False)
+    with pytest.raises(ValueError, match='SAST_FALLBACK_REASON'):
+        sast(tmp_path, False)
+    monkeypatch.setenv('SAST_FALLBACK_REASON', 'VM cannot reach semgrep.dev')
+    check = sast(tmp_path, False)
+    assert check.status == 'not_run'
+    assert check.command[-1] == 'sast-dotnet'
+    context = json.loads((tmp_path / 'reports/sast-context.json').read_text())
+    assert context == {'engine': 'dotnet', 'reason': 'VM cannot reach semgrep.dev'}
+
+
+def test_sast_is_added_without_reordering_existing_checks(modular_project, monkeypatch):
+    from generator.verification import verify
+
+    monkeypatch.delenv('SAST_ENGINE', raising=False)
+    checks = verify(modular_project, deploy=True)
+    assert [check.name for check in checks] == [
+        'structure', 'compose-config', 'dependency-lock', 'backend-dependency-lock',
+        'build', 'unit', 'audit-source-build', 'dependency-audit', 'static-analysis', 'deployment', 'acceptance', 'openapi-lint', 'api-contract', 'ui-smoke',
+    ]
+    assert next(check for check in checks if check.name == 'static-analysis').status == 'not_run'
+
+
+@pytest.mark.parametrize('deployed', [True, False])
+def test_runtime_contract_checks_depend_on_deployment(modular_project, monkeypatch, deployed):
+    import generator.verification as verification
+
+    invocations = []
+
+    def fake_run(root, name, command, execute, sudo_password=None):
+        invocations.append((name, execute))
+        status = 'passed' if execute else 'not_run'
+        if name == 'deployment' and not deployed:
+            status = 'failed'
+        return Check(name=name, command=command, status=status,
+                     exit_code=0 if status == 'passed' else None, duration_seconds=0, log='')
+
+    monkeypatch.setattr(verification, 'run_check', fake_run)
+    monkeypatch.setenv('OWNERSHIP_SCENARIO', '{}')
+    verification.verify(modular_project, execute=True, deploy=True)
+    assert dict(invocations)['openapi-lint'] is deployed
+    assert dict(invocations)['api-contract'] is deployed
+    assert dict(invocations)['ui-smoke'] is deployed
+    assert dict(invocations)['owner-isolation'] is deployed

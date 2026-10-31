@@ -111,6 +111,24 @@ def backend_build(root: Path, execute: bool, sudo_password: str | None = None) -
     )
 
 
+def sast(root: Path, execute: bool, sudo_password: str | None = None) -> Check:
+    engine = os.environ.get("SAST_ENGINE", "semgrep")
+    if engine not in {"semgrep", "dotnet"}:
+        raise ValueError("SAST_ENGINE must be semgrep or dotnet")
+    reason = os.environ.get("SAST_FALLBACK_REASON", "").strip() if engine == "dotnet" else ""
+    if engine == "dotnet" and not reason:
+        raise ValueError("SAST_FALLBACK_REASON is required for the .NET fallback")
+    write_json(root / "reports" / "sast-context.json", {"engine": engine, "reason": reason})
+    return run_check(
+        root,
+        "static-analysis",
+        ["docker", "compose", "--profile", "checks", "run", "--rm",
+         "sast-dotnet" if engine == "dotnet" else "sast"],
+        execute,
+        sudo_password,
+    )
+
+
 def verify(
     root: Path, execute: bool = False, deploy: bool = False, sudo_password: str | None = None
 ) -> list[Check]:
@@ -159,6 +177,13 @@ def verify(
     )
     checks.append(
         run_check(
+            root, "audit-source-build",
+            ["docker", "compose", "--profile", "checks", "build", "audit"],
+            execute and build_passed, sudo_password,
+        )
+    )
+    checks.append(
+        run_check(
             root,
             "dependency-audit",
             ["docker", "compose", "--profile", "checks", "run", "--rm", "audit"],
@@ -166,6 +191,7 @@ def verify(
             sudo_password,
         )
     )
+    checks.append(sast(root, execute and build_passed, sudo_password))
     if deploy:
         checks.append(
             run_check(
@@ -186,6 +212,22 @@ def verify(
                 sudo_password,
             )
         )
+        for name, service in [("openapi-lint", "spectral"), ("api-contract", "schemathesis"), ("ui-smoke", "e2e")]:
+            checks.append(
+                run_check(
+                    root, name,
+                    ["docker", "compose", "--profile", "checks", "run", "--rm", "--build", service],
+                    execute and deployed, sudo_password,
+                )
+            )
+        if os.environ.get("OWNERSHIP_SCENARIO"):
+            checks.append(
+                run_check(
+                    root, "owner-isolation",
+                    ["docker", "compose", "--profile", "checks", "run", "--rm", "ownership-acceptance"],
+                    execute and deployed, sudo_password,
+                )
+            )
     write_json(root / "reports" / "checks.json", [check.model_dump() for check in checks])
     write_reports(root, checks)
     return checks

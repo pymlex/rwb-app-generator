@@ -1,7 +1,7 @@
 services:
   database:
     build: ./database
-    image: rwb-app-generator/postgis:17.9
+    image: ${COMPOSE_PROJECT_NAME:-rwb-app-generator}/postgis:${DATABASE_IMAGE_TAG:-17.9}
     environment:
       POSTGRES_DB: app
       POSTGRES_USER: app
@@ -35,11 +35,13 @@ services:
       retries: 20
     mem_limit: 640m
   backend:
+    image: ${COMPOSE_PROJECT_NAME:-rwb-app-generator}/backend:${APP_IMAGE_TAG:-local}
     build: ./backend
     environment:
       DATABASE_URL: Host=database;Database=app;Username=app;Password=${POSTGRES_PASSWORD}
       ADMIN_TOKEN: ${ADMIN_TOKEN:?Set ADMIN_TOKEN}
       DRIVER_TOKEN: ${DRIVER_TOKEN:?Set DRIVER_TOKEN}
+      DRIVER_TOKENS: ${DRIVER_TOKENS:-}
       KAFKA_BOOTSTRAP_SERVERS: kafka:9092
       ASPNETCORE_ENVIRONMENT: Production
     depends_on:
@@ -49,6 +51,7 @@ services:
         condition: service_healthy
     mem_limit: 384m
   frontend:
+    image: ${COMPOSE_PROJECT_NAME:-rwb-app-generator}/frontend:${APP_IMAGE_TAG:-local}
     build: ./frontend
     ports:
       - '${APP_PORT:-8080}:8080'
@@ -60,23 +63,36 @@ services:
       retries: 30
     mem_limit: 96m
   lock:
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
     image: node:22-bookworm-slim
     profiles: [checks]
     working_dir: /app
     volumes:
       - ./frontend:/app
+    environment:
+      NPM_CONFIG_CACHE: /tmp/npm
     command: [npm, install, --package-lock-only, --ignore-scripts, --no-audit, --no-fund]
     mem_limit: 512m
   backend-lock:
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
     image: mcr.microsoft.com/dotnet/sdk:10.0
     profiles: [checks]
     working_dir: /app
     volumes:
       - ./backend:/app
       - nuget-cache:/root/.nuget/packages
+    environment:
+      DOTNET_CLI_HOME: /tmp/dotnet
     command: [dotnet, restore, App.csproj, --use-lock-file]
     mem_limit: 512m
   unit:
+    image: ${COMPOSE_PROJECT_NAME:-rwb-app-generator}/unit:${APP_IMAGE_TAG:-local}
     build:
       context: .
       dockerfile: backend-unit/Dockerfile
@@ -92,6 +108,7 @@ services:
       BASE_URL: http://frontend:8080
       ADMIN_TOKEN: ${ADMIN_TOKEN}
       DRIVER_TOKEN: ${DRIVER_TOKEN}
+      DRIVER_TOKENS: ${DRIVER_TOKENS:-}
     volumes:
       - ./tests:/tests:ro
     command: [python, -m, unittest, discover, -v, -s, /tests]
@@ -100,14 +117,116 @@ services:
     security_opt: [no-new-privileges:true]
     mem_limit: 128m
   audit:
-    image: aquasec/trivy:0.67.2
+    image: ${COMPOSE_PROJECT_NAME:-rwb-app-generator}/audit:${APP_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: checks/audit/Dockerfile
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
     profiles: [checks]
     volumes:
-      - .:/src:ro
       - ./reports:/reports
       - scanner-cache:/root/.cache
     command: [fs, --scanners, 'vuln,secret', --skip-files, /src/.env, --skip-dirs, '/src/.pipeline,/src/frontend/node_modules', --severity, 'HIGH,CRITICAL', --exit-code, '1', --format, json, --output, /reports/security.json, /src]
     mem_limit: 512m
+  sast:
+    image: semgrep/semgrep:1.145.0
+    profiles: [checks]
+    working_dir: /src
+    environment:
+      SEMGREP_SEND_METRICS: 'off'
+      SEMGREP_ENABLE_VERSION_CHECK: '0'
+      HOME: /tmp
+    volumes:
+      - ./backend:/src/backend:ro
+      - ./frontend/src:/src/frontend/src:ro
+      - ./reports:/reports
+    command: [semgrep, scan, --config, p/csharp, --config, p/typescript, --config, p/secrets, --severity, ERROR, --error, --strict, --metrics, 'off', --disable-version-check, --json-output, /reports/sast.json, /src/backend, /src/frontend/src]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 768m
+  sast-dotnet:
+    image: mcr.microsoft.com/dotnet/sdk:10.0
+    profiles: [checks]
+    working_dir: /app
+    environment:
+      DOTNET_CLI_HOME: /tmp/dotnet
+    volumes:
+      - ./backend:/app
+      - ./reports:/reports
+      - nuget-cache:/root/.nuget/packages
+    command: [dotnet, build, App.csproj, --no-restore, --no-incremental, '-p:SastFallback=true', '-p:ErrorLog=/reports/sast.json,version=2.1']
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 768m
+  spectral:
+    image: ${COMPOSE_PROJECT_NAME:-rwb-app-generator}/spectral:${APP_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: checks/spectral/Dockerfile
+    profiles: [checks]
+    volumes:
+      - ./reports:/reports
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 384m
+  schemathesis:
+    image: ${COMPOSE_PROJECT_NAME:-rwb-app-generator}/schemathesis:${APP_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: checks/schemathesis/Dockerfile
+    profiles: [checks]
+    environment:
+      ADMIN_TOKEN: ${ADMIN_TOKEN}
+      HOME: /tmp
+    volumes:
+      - ./reports:/reports
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 384m
+  e2e:
+    image: ${COMPOSE_PROJECT_NAME:-rwb-app-generator}/e2e:${APP_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: checks/e2e/Dockerfile
+    profiles: [checks]
+    environment:
+      ADMIN_TOKEN: ${ADMIN_TOKEN}
+      E2E_SCENARIO: ${E2E_SCENARIO:-}
+      HOME: /tmp
+    volumes:
+      - ./reports:/reports
+    read_only: true
+    tmpfs: [/tmp]
+    shm_size: 256m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 768m
+  ownership-acceptance:
+    image: python:3.12-alpine
+    profiles: [checks]
+    environment:
+      DRIVER_TOKENS: ${DRIVER_TOKENS:-}
+      OWNERSHIP_SCENARIO: ${OWNERSHIP_SCENARIO:-}
+    volumes:
+      - ./checks/ownership:/checks:ro
+      - ./reports:/reports
+    command: [python, /checks/run.py]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 128m
 volumes:
   database:
   scanner-cache:

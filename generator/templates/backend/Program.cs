@@ -33,6 +33,7 @@ builder.Services.AddRateLimiter(options =>
         context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? context.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 120, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
 });
+DriverIdentities.Parse(builder.Configuration);
 Domain.Configure(builder.Services, builder.Configuration);
 var app = builder.Build();
 app.Use(async (context, next) =>
@@ -201,6 +202,14 @@ public sealed class TokenHandler(
             if (!string.IsNullOrEmpty(expected) && CryptographicOperations.FixedTimeEquals(token, Encoding.UTF8.GetBytes(expected)))
             {
                 var identity = new ClaimsIdentity(new[] { new Claim(ClaimTypes.NameIdentifier, role), new Claim(ClaimTypes.Role, role) }, "Bearer");
+                return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(identity), "Bearer")));
+            }
+        }
+        foreach (var driver in DriverIdentities.Parse(configuration))
+        {
+            if (CryptographicOperations.FixedTimeEquals(token, Encoding.UTF8.GetBytes(driver.Value)))
+            {
+                var identity = new ClaimsIdentity(new[] { new Claim(ClaimTypes.NameIdentifier, driver.Key), new Claim(ClaimTypes.Role, "driver") }, "Bearer");
                 return Task.FromResult(AuthenticateResult.Success(new AuthenticationTicket(new ClaimsPrincipal(identity), "Bearer")));
             }
         }

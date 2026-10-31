@@ -12,6 +12,8 @@ public sealed record Actor(string Subject, bool IsAdmin)
         context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? throw new InvalidOperationException("Authenticated subject is required"),
         context.User.IsInRole("admin"));
     public static Actor System => new("system", true);
+    public bool Owns(string? ownerSubject) => ownerSubject is not null &&
+        (IsAdmin || StringComparer.Ordinal.Equals(Subject, ownerSubject));
 }
 
 public sealed record OperationResult<T>(int StatusCode, T? Data, string? Detail = null)
@@ -19,6 +21,49 @@ public sealed record OperationResult<T>(int StatusCode, T? Data, string? Detail 
     public IResult ToHttp() => Detail is null
         ? Results.Json(Data, statusCode: StatusCode)
         : Results.Problem(Detail, statusCode: StatusCode);
+}
+
+public static class DriverIdentities
+{
+    public static IReadOnlyDictionary<string, string> Parse(IConfiguration configuration)
+    {
+        var drivers = new Dictionary<string, string>(StringComparer.Ordinal);
+        var tokens = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var name in new[] { "ADMIN_TOKEN", "DRIVER_TOKEN" })
+        {
+            var legacy = configuration[name];
+            if (!string.IsNullOrEmpty(legacy))
+                tokens.Add(legacy);
+        }
+        var configured = configuration["DRIVER_TOKENS"];
+        if (string.IsNullOrWhiteSpace(configured))
+            return drivers;
+        foreach (var entry in configured.Split(','))
+        {
+            var pair = entry.Trim().Split(':', 2);
+            if (pair.Length != 2 || !Regex.IsMatch(pair[0], "\\A[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\\z") ||
+                new[] { "admin", "driver", "system" }.Contains(pair[0], StringComparer.OrdinalIgnoreCase) ||
+                string.IsNullOrEmpty(pair[1]) || pair[1].Any(char.IsWhiteSpace) ||
+                !drivers.TryAdd(pair[0], pair[1]) || !tokens.Add(pair[1]))
+                throw new InvalidOperationException("DRIVER_TOKENS requires unique non-reserved ids and distinct non-empty tokens");
+        }
+        return drivers;
+    }
+}
+
+public static class OwnedResource
+{
+    // Load the persisted owner with the resource, never from a request's owner field.
+    public static OperationResult<T> Read<T>(Actor actor, string? ownerSubject, T? resource) =>
+        resource is not null && actor.Owns(ownerSubject)
+            ? new(200, resource)
+            : new(404, default, "Resource not found");
+
+    // Invoke inside the transaction holding the aggregate row lock for mutations.
+    public static Task<OperationResult<T>> Execute<T>(Actor actor, string? ownerSubject,
+        Func<Task<OperationResult<T>>> action) => actor.Owns(ownerSubject)
+            ? action()
+            : Task.FromResult(new OperationResult<T>(404, default, "Resource not found"));
 }
 
 public static class DomainJson
