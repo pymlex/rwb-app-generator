@@ -1,0 +1,1 @@
+{"SchemaVersion":2,"Results":[{"Target":"backend/App.csproj","Vulnerabilities":[{"VulnerabilityID":"CVE-FIXTURE","Severity":"HIGH"}]},{"Target":"example.txt","Secrets":[{"RuleID":"fixture-rule","Severity":"CRITICAL","Match":"DO-NOT-COPY-SECRET-MATCH"}]}]}

@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from generator.models import Analysis, Check, Evidence
+from generator.reports import write_reports
 from generator.storage import write_json
 
 
@@ -185,6 +186,7 @@ def verify(
             )
         )
     write_json(root / "reports" / "checks.json", [check.model_dump() for check in checks])
+    write_reports(root, checks)
     return checks
 
 
@@ -317,4 +319,5 @@ def report(root: Path, analysis: Analysis, checks: list[Check], elapsed: float) 
         ]
     )
     (root / "reports" / "verification.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    write_reports(root, checks)
     return result
